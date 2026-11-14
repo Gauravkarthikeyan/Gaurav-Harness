@@ -115,6 +115,7 @@ their parent's area.
   repo is the update. Idempotent; refuses to overwrite a same-named file it didn't write (marker line) unless `--force`.
 
 ### 5.2 Look & feel ("golden CUI")
+> Look & feel superseded by [`2026-11-15-gk-visual-v2.md`](2026-11-15-gk-visual-v2.md) (black base, sparse gold, gk-night/gk-day).
 - **Principle: gold is the accent, not the paint.** Warm near-black neutrals carry 90 % of the screen; gold appears
   only where attention belongs: the brand mark, the Core, the focused tile/row, the primary key hint. Green is
   reserved for success (and the finale), red for errors. No rainbow status colors, no emoji in UI chrome.
