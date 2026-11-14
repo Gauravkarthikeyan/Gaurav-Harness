@@ -13,17 +13,16 @@ export const SETUP_OUTRO_MS = 1200;
 const outroMemo = new Memo();
 
 /**
- * Native outro, centered: the builtin `omp` mark, "You're all set", the
- * default model now in effect (`model`, its display name, when there is
- * one), and an indeterminate progress bar standing in for the timed sweep.
- * A click sends the `continue` action.
+ * Native outro, centered: "You're all set", the default model now in effect
+ * (`model`, its display name, when there is one), and an indeterminate
+ * progress bar standing in for the timed sweep. A click sends the `continue`
+ * action. gk: no builtin image mark (the host's builtin mark is omp's logo).
  */
 export function describeSetupOutro(model: string | undefined): NativeNode {
 	return outroMemo.get([model], () =>
 		col(
 			compact([
 				node("spacer", { grow: 1 }, undefined, "top"),
-				node("image", { builtin: "omp", alt: APP_NAME, w: 72, role: "omp.setup.outro.mark" }, undefined, "logo"),
 				keyed(text([span("You're all set", "strong")], { wrap: "none", role: "omp.setup.outro.title" }), "title"),
 				model !== undefined &&
 					keyed(

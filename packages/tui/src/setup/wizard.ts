@@ -5,7 +5,6 @@ import { glyphSetupScene } from "./scenes/glyph";
 import { modelSetupScene } from "./scenes/model";
 import { providersSetupScene } from "./scenes/sign-in";
 import { themeSetupScene } from "./scenes/theme";
-import { updatesSetupScene } from "./scenes/updates";
 import type { SetupScene } from "./scenes/types";
 import { SetupWizardComponent, setupSceneApplies } from "./wizard-overlay";
 
@@ -15,13 +14,13 @@ export { runStartupSplash } from "./startup-splash";
 export { CURRENT_SETUP_VERSION };
 
 /** Ordered onboarding scenes with independent version gates. */
+// gk: no updates scene; GK Code updates with `git pull` (self-update disabled).
 export const ALL_SCENES = [
 	providersSetupScene,
 	modelSetupScene,
 	glyphSetupScene,
 	composerSetupScene,
 	themeSetupScene,
-	updatesSetupScene,
 ] as const satisfies readonly SetupScene[];
 
 /** Environment and invocation gates for onboarding scene selection. */

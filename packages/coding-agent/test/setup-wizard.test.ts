@@ -116,14 +116,6 @@ describe("setup wizard scene selection", () => {
 		expect(await selectSetupScenes(0, ALL_SCENES, ctx, { isTTY: false, force: true })).toEqual([]);
 	});
 
-	it("skips the auto-update question where omp cannot update itself (Tern, Nix, a source checkout)", async () => {
-		vi.spyOn(updateCli, "canSelfUpdate").mockResolvedValue(false);
-		const scenes = await selectSetupScenes(0, ALL_SCENES, fakeContextWithConfiguredModel(), { isTTY: true });
-		expect(scenes.map(scene => scene.id)).toEqual(
-			ALL_SCENES.map(scene => scene.id).filter(id => id !== "auto-update"),
-		);
-	});
-
 	it("drops the glyph scene once the terminal renders omp's bundled icons in-band", async () => {
 		setTerminalGlyphProtocol(true);
 		try {

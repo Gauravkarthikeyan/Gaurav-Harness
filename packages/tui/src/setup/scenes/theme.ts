@@ -439,7 +439,7 @@ export const themeSetupScene: SetupScene = {
 	id: "theme",
 	title: "Pick a theme",
 	step: "Theme",
-	minVersion: 1,
+	minVersion: 3, // gk: was 1; carries the setup-version bar the removed updates scene held (v3 = gk-night/gk-day)
 	ansiOnly: true,
 	mount: host => new ThemeSceneController(host),
 };
