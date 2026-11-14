@@ -1307,7 +1307,7 @@ export class UiHelpers {
 	showNewVersionNotification(newVersion: string): void {
 		const title = "Update Available";
 		const prefix = `New version ${newVersion} is available. Run: `;
-		const command = "omp update";
+		const command = "git pull"; // gk: GK Code updates from its git checkout, never via upstream `update`
 		const native = noticeRow(
 			"info",
 			[

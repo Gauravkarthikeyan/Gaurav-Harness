@@ -50,6 +50,7 @@ import {
 } from "./npm-registry";
 
 import { cfgUpdateChannel } from "../modes/settings";
+import { GK_SELF_UPDATE, GK_UPDATE_HINT } from "../gk/brand"; // gk: self-update disabled
 
 const PACKAGE = "@oh-my-pi/pi-coding-agent";
 const HOMEBREW_FORMULA = "can1357/tap/omp";
@@ -336,6 +337,7 @@ export function isSourceCheckout(): boolean {
  * package-manager probes `omp update` runs.
  */
 export async function canSelfUpdate(): Promise<boolean> {
+	if (!GK_SELF_UPDATE) return false; // gk: upstream updates would install omp over GK Code
 	if (isSourceCheckout()) return false;
 	if (isPathInDirectory(isCompiledBinary() ? process.execPath : import.meta.dir, NIX_STORE_DIR)) return false;
 	return (await managedInstallName(process.execPath)) === undefined;
@@ -2317,6 +2319,11 @@ async function runManagedUpdate(
  * fails, or when another update holds the install lock.
  */
 export async function runUpdateCommand(opts: UpdateOptions): Promise<UpdateOutcome> {
+	// gk: upstream update channels ship omp builds; never install them over GK Code.
+	if (!GK_SELF_UPDATE) {
+		console.log(chalk.yellow(GK_UPDATE_HINT));
+		return { kind: "unsupported", reason: GK_UPDATE_HINT };
+	}
 	const ompPath = resolveOmpPath();
 	const manager = ompPath ? await managedInstallName(ompPath) : undefined;
 	if (manager) {

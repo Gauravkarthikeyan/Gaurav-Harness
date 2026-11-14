@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { removeWithRetries, setAgentDir, setProjectDir, VERSION } from "@oh-my-pi/pi-utils";
-import { currentBuildHost, OMP_BUILD } from "../../src/cli/build-service";
+import { removeWithRetries, setAgentDir, setProjectDir } from "@oh-my-pi/pi-utils";
+import { GK_UPDATE_HINT } from "../../src/gk/brand";
 import { fixedNpmRegistry } from "../../src/cli/npm-registry";
 import { getLatestRelease, runUpdateCommand } from "../../src/cli/update-cli";
 import { cfgUpdateChannel } from "../../src/modes/settings";
@@ -78,52 +78,35 @@ describe("runUpdateCommand version source", () => {
 		return { logs };
 	}
 
-	it("checks npm, with a timeout, when no standalone binary is on PATH", async () => {
+	// gk: self-update is disabled — upstream channels ship omp builds.
+	it("never contacts an update source when checking", async () => {
 		await isolatePath();
 		process.env.PI_BUILD_URL = "https://build.test";
-		quiet();
+		const { logs } = quiet();
 		const requests = stubFetch(() => Response.json({ version: "999.0.0" }));
 
-		await runUpdateCommand({ force: false, check: true });
+		const outcome = await runUpdateCommand({ force: false, check: true });
 
-		expect(requests.length).toBeGreaterThan(0);
-		expect(requests.some(request => request.url.startsWith("https://build.test/"))).toBe(false);
-		for (const request of requests) expect(request.signal).toBeInstanceOf(AbortSignal);
+		expect(outcome).toEqual({ kind: "unsupported", reason: GK_UPDATE_HINT });
+		expect(requests).toEqual([]);
+		expect(logs.some(line => line.includes(GK_UPDATE_HINT))).toBe(true);
 	});
 
-	it.skipIf(process.platform === "win32")(
-		"updates a standalone binary from the build service without asking npm",
-		async () => {
-			const dir = await isolatePath();
-			const ompPath = path.join(dir, "omp");
-			await Bun.write(ompPath, "#!/bin/sh\necho omp/1.0.0\n");
-			await fs.chmod(ompPath, 0o755);
-			const next = "#!/bin/sh\necho omp/999.0.0\n";
-			const host = await currentBuildHost();
-			const { target } = host;
-			const fileName = OMP_BUILD.fileName(host, "999.0.0");
-			process.env.PI_BUILD_URL = "https://build.test";
-			const check = `https://build.test/api/products/omp/latest/${target}?channel=stable&from_version=${VERSION}`;
-			const { logs } = quiet();
-			const requests = stubFetch(url => {
-				if (url === check) {
-					return Response.json({
-						build: { version: "999.0.0" },
-						file: { name: fileName, size: Buffer.byteLength(next), sha256: Bun.SHA256.hash(next, "hex") },
-						download: "https://r2.test/omp",
-					});
-				}
-				if (url === "https://r2.test/omp") return new Response(next);
-				return new Response(null, { status: 404 });
-			});
+	it("never replaces a binary on PATH when installing", async () => {
+		const dir = await isolatePath();
+		const binPath = path.join(dir, "gk");
+		const original = "#!/bin/sh\necho gk/1.0.0\n";
+		await Bun.write(binPath, original);
+		process.env.PI_BUILD_URL = "https://build.test";
+		quiet();
+		const requests = stubFetch(() => new Response("#!/bin/sh\necho omp/999.0.0\n"));
 
-			await runUpdateCommand({ force: false, check: false });
+		const outcome = await runUpdateCommand({ force: false, check: false });
 
-			expect(requests.map(request => request.url)).toEqual([check, "https://r2.test/omp"]);
-			expect(await Bun.file(ompPath).text()).toBe(next);
-			expect(logs.some(line => line.includes("Updated to 999.0.0"))).toBe(true);
-		},
-	);
+		expect(outcome.kind).toBe("unsupported");
+		expect(requests).toEqual([]);
+		expect(await Bun.file(binPath).text()).toBe(original);
+	});
 });
 
 describe("getLatestRelease rename pointers", () => {

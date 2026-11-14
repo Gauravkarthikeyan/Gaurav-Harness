@@ -49,6 +49,7 @@ import {
 	verifyInstalledVersion,
 } from "./update-cli";
 import { AUTO_UPDATE_WORKER_ARG } from "./worker-selectors";
+import { GK_SELF_UPDATE } from "../gk/brand"; // gk: self-update disabled
 
 /** Env var carrying the version the spawning launch's check offered. */
 const TARGET_ENV = "OMP_AUTO_UPDATE_TARGET";
@@ -342,6 +343,7 @@ async function settle(outcome: UpdateOutcome): Promise<StateUpdate> {
  * the outcome. Exits at once when another worker holds the status lock.
  */
 export async function runAutoUpdateWorker(): Promise<never> {
+	if (!GK_SELF_UPDATE) process.exit(0); // gk: never install upstream (omp) releases
 	const file = statePath();
 	await fs.mkdir(path.dirname(file), { recursive: true });
 	const lock = tryAcquireFileLock(file);

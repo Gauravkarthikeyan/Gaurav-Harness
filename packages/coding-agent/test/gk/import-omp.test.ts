@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { GK_UPSTREAM_VERSION, formatGkVersion } from "../../src/gk/brand";
+import { GK_UPSTREAM_VERSION, GK_VERSION, formatGkVersion } from "../../src/gk/brand";
 import { importOmpProfile } from "../../src/gk/import-omp";
 
 describe("importOmpProfile", () => {
@@ -70,8 +70,10 @@ describe("importOmpProfile", () => {
 });
 
 describe("gk version string", () => {
-	it("names gk-code and the omp base", () => {
-		expect(GK_UPSTREAM_VERSION).toBe("18.20.1");
-		expect(formatGkVersion("1.2.3")).toBe("gk-code 1.2.3 (omp 18.20.1)");
+	it("prints only gk-code and its own version", () => {
+		expect(GK_VERSION).toBe("0.1.0");
+		expect(formatGkVersion()).toBe("gk-code 0.1.0");
+		expect(formatGkVersion("1.2.3")).toBe("gk-code 1.2.3");
+		expect(formatGkVersion()).not.toContain(GK_UPSTREAM_VERSION);
 	});
 });
