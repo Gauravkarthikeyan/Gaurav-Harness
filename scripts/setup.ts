@@ -36,7 +36,7 @@ interface Step {
  * Native equivalent of `scripts/link-omp.sh` for Windows, where `sh` is
  * unavailable (issue #12483). Same semantics: verify the wrapper target,
  * resolve Bun's global bin dir (`bun pm -g bin`, then
- * `${BUN_INSTALL:-$HOME/.bun}/bin`), and link `omp` to it — symlink first,
+ * `${BUN_INSTALL:-$HOME/.bun}/bin`), and link `gk` and `gk-code` to it (gk: was `omp`) — symlink first,
  * plain copy as a fallback when links need privileges the user lacks.
  * Returns a process-like exit code for the shared runner below.
  */
@@ -56,28 +56,30 @@ function linkOmpWindows(repoRoot: string): number {
 		// fall through to the default below
 	}
 	if (!globalBin) globalBin = path.join(process.env.BUN_INSTALL ?? path.join(os.homedir(), ".bun"), "bin");
-	const linkPath = path.join(globalBin, "omp");
-	try {
-		fs.mkdirSync(globalBin, { recursive: true });
+	// gk: link `gk` and `gk-code` only; never `omp`, which would shadow a real omp install.
+	for (const name of ["gk", "gk-code"]) {
+		const linkPath = path.join(globalBin, name);
 		try {
-			fs.unlinkSync(linkPath);
-		} catch {
-			// nothing to replace
-		}
-		fs.symlinkSync(target, linkPath, "file");
-		console.log(`link-omp: linked ${linkPath} -> ${target}`);
-		return 0;
-	} catch (error) {
-		console.error(`link-omp: symlink failed (${error}), falling back to copy`);
-		try {
-			fs.copyFileSync(target, linkPath);
-			console.log(`link-omp: copied ${target} -> ${linkPath}`);
-			return 0;
-		} catch (copyError) {
-			console.error(`link-omp: copy failed: ${copyError}`);
-			return 1;
+			fs.mkdirSync(globalBin, { recursive: true });
+			try {
+				fs.unlinkSync(linkPath);
+			} catch {
+				// nothing to replace
+			}
+			fs.symlinkSync(target, linkPath, "file");
+			console.log(`link-omp: linked ${linkPath} -> ${target}`);
+		} catch (error) {
+			console.error(`link-omp: symlink failed (${error}), falling back to copy`);
+			try {
+				fs.copyFileSync(target, linkPath);
+				console.log(`link-omp: copied ${target} -> ${linkPath}`);
+			} catch (copyError) {
+				console.error(`link-omp: copy failed: ${copyError}`);
+				return 1;
+			}
 		}
 	}
+	return 0;
 }
 
 const steps: Step[] = [

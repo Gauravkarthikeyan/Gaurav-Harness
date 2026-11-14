@@ -27,5 +27,9 @@ if [ -z "$global_bin" ]; then
 fi
 
 mkdir -p "$global_bin"
-ln -sfn "$target" "$global_bin/omp"
-echo "link-omp: linked $global_bin/omp -> $target"
+# gk: install the wrapper as `gk` and `gk-code` only; never `omp`, which would
+# shadow a real omp install on PATH.
+for name in gk gk-code; do
+	ln -sfn "$target" "$global_bin/$name"
+	echo "link-omp: linked $global_bin/$name -> $target"
+done
