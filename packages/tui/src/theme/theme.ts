@@ -7,6 +7,7 @@ import * as logger from "@oh-my-pi/pi-utils/logger";
 import { isTerminalBackgroundQueryTrusted } from "../terminal-multiplexer";
 import { setActiveSymbolTheme } from "./active-symbols";
 import { ansi256ToHex, isLightSurface, resolveThemeColors, resolveVarRefs } from "./color";
+import { DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME } from "./gk-palette"; // gk: gk-night / gk-day defaults
 import { type CreateThemeOptions, getBuiltinThemes, loadTheme, loadThemeJson, loadThemeSync } from "./loader";
 import { type ThemeColor, type ThemeJson } from "./schema";
 import type { SymbolPreset } from "./symbols";
@@ -144,8 +145,8 @@ var themeWatcher: fs.FSWatcher | undefined;
 var themeReloadTimer: NodeJS.Timeout | undefined;
 var sigwinchHandler: (() => void) | undefined;
 var autoDetectedTheme: boolean = false;
-var autoDarkTheme: string = "dark";
-var autoLightTheme: string = "light";
+var autoDarkTheme: string = DEFAULT_DARK_THEME; // gk: was "dark"
+var autoLightTheme: string = DEFAULT_LIGHT_THEME; // gk: was "light"
 var onThemeChangeCallback: ((event: ThemeChangeEvent) => void) | undefined;
 var themeLoadRequestId: number = 0;
 let themeEpoch = 0;
@@ -163,8 +164,8 @@ function configureTheme(
 	lightTheme?: string,
 ): string {
 	autoDetectedTheme = true;
-	autoDarkTheme = darkTheme ?? "dark";
-	autoLightTheme = lightTheme ?? "light";
+	autoDarkTheme = darkTheme ?? DEFAULT_DARK_THEME; // gk: was "dark"
+	autoLightTheme = lightTheme ?? DEFAULT_LIGHT_THEME; // gk: was "light"
 	currentSymbolPresetOverride = symbolPreset;
 	currentColorBlindMode = colorBlindMode ?? false;
 	const name = getDefaultTheme();

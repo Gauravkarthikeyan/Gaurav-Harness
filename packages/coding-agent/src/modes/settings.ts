@@ -19,6 +19,7 @@ import { WORD_COMPLETION_METHODS } from "@oh-my-pi/pi-tui/prompt/word-completion
 import { applyHyperlinkSetting } from "@oh-my-pi/pi-tui/render/hyperlink";
 import { setInlineImageMaxColumns, setInlineImageMaxRows } from "@oh-my-pi/pi-tui/render/render-utils";
 import { setShimmerMode } from "@oh-my-pi/pi-tui/theme/shimmer";
+import { DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME } from "@oh-my-pi/pi-tui/theme/gk-palette"; // gk: gk-night / gk-day defaults
 import { setAutoThemeMapping, setColorBlindMode, setSymbolPreset } from "@oh-my-pi/pi-tui/theme/theme";
 import { DEFAULT_MAX_FPS, parseMaxFps, setMaxFps } from "@oh-my-pi/pi-tui/frame-rate";
 import { setMotionEffects } from "@oh-my-pi/pi-tui/motion-effects";
@@ -64,7 +65,7 @@ export const cfgGitEnabled = register({
 export const cfgThemeDark = register({
 	id: "theme.dark",
 	type: "string",
-	default: "titanium",
+	default: DEFAULT_DARK_THEME, // gk: was "titanium"
 	ui: {
 		tab: "appearance",
 		group: "Theme",
@@ -78,7 +79,7 @@ effect(cfgThemeDark, name => setAutoThemeMapping("dark", name));
 export const cfgThemeLight = register({
 	id: "theme.light",
 	type: "string",
-	default: "light",
+	default: DEFAULT_LIGHT_THEME, // gk: was "light"
 	ui: {
 		tab: "appearance",
 		group: "Theme",
@@ -448,7 +449,7 @@ export const cfgTuiTextSizing = register({
 export const cfgTuiColorfulMarkdown = register({
 	id: "tui.colorfulMarkdown",
 	type: "boolean",
-	default: true,
+	default: false, // gk: single-color headings (mdHeading) by default
 	ui: {
 		tab: "appearance",
 		group: "Display",
@@ -652,7 +653,8 @@ export const cfgTuiMouse = register({
 		label: "Mouse Click-to-Focus",
 		get description() {
 			const shift = formatKeyHint("shift");
-			return `Capture mouse clicks in the main session so live subagent cards and HUD rows focus on click, with a hover highlight on the target, and clicks on extension-owned links reach their extension (the link-hint key picks them without the mouse). Native text selection becomes ${shift}+drag while on, and mouse capture stops wheel scrolling — the terminal reports wheel ticks to omp instead — so scroll with the terminal's keyboard scrollback keys, or turn this off`;
+			// gk: debrand
+			return `Capture mouse clicks in the main session so live subagent cards and HUD rows focus on click, with a hover highlight on the target, and clicks on extension-owned links reach their extension (the link-hint key picks them without the mouse). Native text selection becomes ${shift}+drag while on, and mouse capture stops wheel scrolling — the terminal reports wheel ticks to GK Code instead — so scroll with the terminal's keyboard scrollback keys, or turn this off`;
 		},
 	},
 });
@@ -1288,7 +1290,7 @@ export const cfgStartupCheckUpdate = register({
 		tab: "interaction",
 		group: "Startup & Updates",
 		label: "Check for Updates",
-		description: "Check for omp updates on startup",
+		description: "Unused in GK Code (self-update is disabled; update with git pull)", // gk: debrand
 	},
 });
 
@@ -1301,7 +1303,7 @@ export const cfgUpdateChannel = register({
 		tab: "interaction",
 		group: "Startup & Updates",
 		label: "Update Channel",
-		description: "Update channel used by omp update and the startup update check",
+		description: "Unused in GK Code (self-update is disabled)", // gk: debrand
 		options: [
 			{ value: "stable", label: "Stable" },
 			{ value: "canary", label: "Canary" },
@@ -1323,7 +1325,7 @@ export const cfgUpdateAuto = register({
 		tab: "interaction",
 		group: "Startup & Updates",
 		label: "Auto Update",
-		description: "Install omp updates in the background on startup; the next launch runs the new version",
+		description: "Unused in GK Code (self-update is disabled; update with git pull)", // gk: debrand
 	},
 });
 

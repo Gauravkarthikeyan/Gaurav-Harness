@@ -7,6 +7,8 @@ import { detectColorMode, isLightSurface, mixThemeColors, resolveThemeColors, re
 import darkThemeJson from "./dark.json" with { type: "json" };
 import defaultThemes from "./defaults.json" with { type: "json" };
 import lightThemeJson from "./light.json" with { type: "json" };
+import gkDayThemeJson from "./gk-day.json" with { type: "json" }; // gk: gk-night / gk-day themes
+import gkNightThemeJson from "./gk-night.json" with { type: "json" }; // gk: gk-night / gk-day themes
 import type { ColorMode, ThemeBg, ThemeColor, ThemeJson } from "./schema";
 import { normalizeSpinnerFramesOverride, type SymbolPreset } from "./symbols";
 import { Theme } from "./theme-class";
@@ -15,9 +17,14 @@ import { Theme } from "./theme-class";
 // Theme Loading
 // ============================================================================
 
+// gk: default themes per terminal appearance (omp: titanium / light).
+export { DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME } from "./gk-palette";
+
 const BUILTIN_THEMES: Record<string, ThemeJson> = {
 	dark: darkThemeJson as ThemeJson,
 	light: lightThemeJson as ThemeJson,
+	"gk-night": gkNightThemeJson as ThemeJson, // gk: gk-night / gk-day themes
+	"gk-day": gkDayThemeJson as ThemeJson, // gk: gk-night / gk-day themes
 	...(defaultThemes as Record<string, ThemeJson>),
 };
 

@@ -6,6 +6,7 @@ import { Text } from "../../components/text";
 import { WizardStep } from "../../components/wizard-step";
 import { Container } from "../../tui";
 import { editorKey } from "../../chrome/keybinding-hints";
+import { DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME } from "../../theme/gk-palette"; // gk: gk-night / gk-day defaults
 import {
 	enableAutoTheme,
 	getAvailableThemes,
@@ -26,9 +27,10 @@ import type { SetupScene, SetupSceneController, SetupSceneHost } from "./types";
 type ThemeMode = "curated" | "all";
 
 const CURATED_ITEMS: readonly SelectItem[] = [
-	{ value: "auto", label: "Match terminal", description: "Titanium in dark terminals, Light in light terminals" },
-	{ value: "theme:titanium", label: "Titanium", description: "Default dark theme" },
-	{ value: "theme:light", label: "Light", description: "Default light theme" },
+	// gk: curated defaults are gk-night / gk-day (omp: Titanium / Light).
+	{ value: "auto", label: "Match terminal", description: "GK Night in dark terminals, GK Day in light terminals" },
+	{ value: `theme:${DEFAULT_DARK_THEME}`, label: "GK Night", description: "Default dark theme, black background" },
+	{ value: `theme:${DEFAULT_LIGHT_THEME}`, label: "GK Day", description: "Default light theme" },
 	{ value: "colorblind", label: "Colorblind colors", description: "Adjust red/green contrast" },
 	{ value: "ansi", label: "ANSI-safe", description: "ASCII glyphs with the dark terminal theme" },
 	{ value: "browse", label: "Browse all…", description: "Show every built-in and custom theme" },
@@ -303,8 +305,8 @@ class ThemeSceneController implements SetupSceneController {
 
 	#currentCuratedIndex(): number {
 		const current = getCurrentThemeName();
-		if (current === "titanium") return 1;
-		if (current === "light") return 2;
+		if (current === DEFAULT_DARK_THEME) return 1; // gk: was "titanium"
+		if (current === DEFAULT_LIGHT_THEME) return 2; // gk: was "light"
 		return 0;
 	}
 
@@ -350,8 +352,8 @@ class ThemeSceneController implements SetupSceneController {
 
 	async #commit(value: string): Promise<void> {
 		if (value === "auto") {
-			this.#host.ctx.saveTheme("dark", "titanium");
-			this.#host.ctx.saveTheme("light", "light");
+			this.#host.ctx.saveTheme("dark", DEFAULT_DARK_THEME); // gk: was "titanium"
+			this.#host.ctx.saveTheme("light", DEFAULT_LIGHT_THEME); // gk: was "light"
 			await this.#applyPreviewPresentation(this.#originalSymbolPreset, this.#originalColorBlindMode);
 			enableAutoTheme();
 			return;
