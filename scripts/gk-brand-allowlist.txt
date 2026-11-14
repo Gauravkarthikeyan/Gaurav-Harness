@@ -1,0 +1,5 @@
+# gk-brand-audit allowlist: <glob>[#<needle or /regex/>]: <reason>
+# Only functional identifiers belong here; user-facing prose must be rebranded instead.
+packages/*/src/**#/@oh-my-pi\//: npm package names of the forked workspace (kept for upstream merges)
+packages/*/src/**#/^omp\.(?!sh$)[A-Za-z][\w.-]*$/: internal style-role / telemetry attribute keys, never rendered as text
+packages/ai/src/providers/**: provider request code is out of scope (headers, client fingerprints, endpoints)
