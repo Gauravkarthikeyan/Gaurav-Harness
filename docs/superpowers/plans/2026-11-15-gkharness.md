@@ -1,3 +1,5 @@
+> DRAFT — revision in progress, see HANDOFF.md. Spec rev 2 (Stage, Core, finale, skills pack, launch anywhere) is NOT yet reflected in the tasks below; Task 12 (SplitLayout) is superseded by spec §5.5.
+
 # GK Harness Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -179,7 +181,7 @@ Algorithm exactly as spec §5.4 Router (eligibility `tier ≥ max(difficulty, mi
 - `scopesOverlap(a: string, b: string): boolean` — normalize (strip `./`, collapse `//`, trailing `/` on dirs kept); overlap iff equal or one is a path-segment prefix of the other (`src/api` vs `src/api2` → false).
 - `canRunConcurrently(items: WorkItem[], a: string, b: string): boolean` — neither transitively depends on the other.
 
-- [ ] **Step 1: Failing tests** — each error code from a minimal plan; `src/api/` vs `src/api/routes.ts` overlap; `src/api` vs `src/api2` no overlap; overlapping scopes allowed when B dependsOn A (also transitively via C) (Review Focus 3); valid 3-item plan → `[]`.
+- [ ] **Step 1: Failing tests** — each error code from a minimal plan (`empty-scope` = a blank/whitespace-only scope entry; `scope: []` is a valid read-only item that never overlaps); `src/api/` vs `src/api/routes.ts` overlap; `src/api` vs `src/api2` no overlap; overlapping scopes allowed when B dependsOn A (also transitively via C) (Review Focus 3); valid 3-item plan → `[]`.
 - [ ] **Step 2–4:** FAIL → implement → PASS.
 - [ ] **Step 5:** Commit `feat(gk): crew plan validation`.
 
