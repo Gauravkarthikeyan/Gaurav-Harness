@@ -350,7 +350,13 @@ export class VibeSessionRegistry {
 		}
 	}
 
-	#resolveWorker(session: VibeParentSession, cli: VibeCli): ResolvedVibeWorker {
+	#resolveWorker(session: VibeParentSession, cli: VibeCli, model?: string): ResolvedVibeWorker {
+		// gk: an explicit selector (Orchestra crew) bypasses the fast/good tier mapping on the `task` agent.
+		if (model) {
+			const agent = getBundledAgent("task");
+			if (!agent) throw new ToolError(`Bundled agent "task" for model "${model}" is unavailable.`);
+			return { agent, modelOverride: [model] };
+		}
 		const agentName = VIBE_CLI_AGENT[cli];
 		const agent = getBundledAgent(agentName);
 		if (!agent) {
@@ -801,7 +807,10 @@ export class VibeSessionRegistry {
 	}
 
 	/** Spawn a persistent worker session and start its first turn in the background. */
-	async spawn(session: ToolSession, args: { cli: VibeCli; name?: string; prompt: string }): Promise<VibeSpawnOutcome> {
+	async spawn(
+		session: ToolSession,
+		args: { cli: VibeCli; name?: string; prompt: string; model?: string }, // gk: optional explicit model selector
+	): Promise<VibeSpawnOutcome> {
 		const scope = this.ownerScope(session);
 		return this.#withTerminationLock(scope, () => this.#spawnLocked(session, scope, args));
 	}
@@ -809,13 +818,13 @@ export class VibeSessionRegistry {
 	async #spawnLocked(
 		session: ToolSession,
 		scope: VibeOwnerScope,
-		args: { cli: VibeCli; name?: string; prompt: string },
+		args: { cli: VibeCli; name?: string; prompt: string; model?: string }, // gk: optional explicit model selector
 	): Promise<VibeSpawnOutcome> {
 		if (this.#terminatedScopes.has(scopeKey(scope, ""))) {
 			throw new ToolError("Vibe mode has exited; enter Vibe mode again before spawning a worker.");
 		}
 		const manager = this.#manager(session);
-		const { agent, modelOverride, modelRole } = this.#resolveWorker(session, args.cli);
+		const { agent, modelOverride, modelRole } = this.#resolveWorker(session, args.cli, args.model); // gk: model
 		if (!session.agentOutputManager) {
 			session.agentOutputManager = new AgentOutputManager(session.getArtifactsDir ?? (() => null));
 		}
