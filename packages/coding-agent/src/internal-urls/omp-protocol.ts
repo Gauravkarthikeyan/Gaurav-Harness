@@ -11,7 +11,7 @@ import * as path from "node:path";
 import { resolveContainedPath, resolveContainedPathSync } from "../discovery/contained-path";
 import ompDoc from "../prompts/internal-urls/omp.md" with { type: "text" };
 import { getDocFilenames, getDocsDiskRoot, getEmbeddedDoc } from "./docs-index";
-import { ompDocFilename, ompDocRel, ompDocsScopeEntries } from "./omp-scope";
+import { DOCS_SCHEME, ompDocFilename, ompDocRel, ompDocsScopeEntries } from "./omp-scope"; // gk: scheme rename
 import type {
 	InternalResource,
 	InternalUrl,
@@ -48,7 +48,7 @@ function docFileFor(url: InternalUrl): string | undefined {
  * Resolves documentation file names to their content, or lists available docs.
  */
 export class OmpProtocolHandler implements ProtocolHandler {
-	readonly scheme = "omp";
+	readonly scheme = DOCS_SCHEME; // gk: `gk://` (upstream `omp://`)
 	readonly spec: SchemeSpec = { backing: "virtual", selectors: "lines", immutable: true, linkable: true };
 
 	/** Always advertised: harness docs are embedded in every build. */
@@ -80,7 +80,7 @@ export class OmpProtocolHandler implements ProtocolHandler {
 			return entries;
 		}
 		const resource = await this.#readDoc(docPath, ompDocFilename(url), url);
-		return [{ url: `omp://${docPath}`, content: resource.content }];
+		return [{ url: `${DOCS_SCHEME}://${docPath}`, content: resource.content }]; // gk: scheme rename
 	}
 
 	async complete(): Promise<UrlCompletion[]> {
@@ -120,7 +120,7 @@ export class OmpProtocolHandler implements ProtocolHandler {
 			throw new Error("No documentation files found");
 		}
 
-		const listing = filenames.map(f => `- [${f}](omp://${f})`).join("\n");
+		const listing = filenames.map(f => `- [${f}](${DOCS_SCHEME}://${f})`).join("\n"); // gk: scheme rename
 		const content = `# Documentation\n\n${filenames.length} files available:\n\n${listing}\n`;
 
 		return {
@@ -141,7 +141,7 @@ export class OmpProtocolHandler implements ProtocolHandler {
 			const suffix =
 				suggestions.length > 0
 					? `\nDid you mean: ${suggestions.join(", ")}`
-					: "\nUse omp:// to list available files.";
+					: `\nUse ${DOCS_SCHEME}:// to list available files.`; // gk: scheme rename
 			throw new Error(`Documentation file not found: ${filename}${suffix}`);
 		}
 

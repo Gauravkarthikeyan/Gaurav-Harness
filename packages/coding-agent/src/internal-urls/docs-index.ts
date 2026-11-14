@@ -116,7 +116,7 @@ function readShippedEmbed(): DocsIndex | null {
 /** Empty index for when no docs corpus is reachable — degrades `omp://` instead of throwing ENOENT at callers. */
 function emptyIndex(): DocsIndex {
 	logger.warn(
-		"omp:// docs corpus unavailable: no build-time embed, on-disk docs/ directory, or shipped dist embed found",
+		"gk:// docs corpus unavailable: no build-time embed, on-disk docs/ directory, or shipped dist embed found", // gk: scheme rename
 	);
 	return { filenames: [], getBody: () => Promise.resolve(undefined) };
 }

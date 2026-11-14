@@ -58,8 +58,8 @@ describe("prompt action autocomplete", () => {
 		// The coding-agent internal-url router installs the real host; here a stub
 		// proves the fall-through contract without the router.
 		setInternalUrlCompletionHost({
-			completionSchemes: () => ["omp"],
-			resolveCompletions: async scheme => (scheme === "omp" ? [{ value: "docs", label: "docs" }] : null),
+			completionSchemes: () => ["gk"],
+			resolveCompletions: async scheme => (scheme === "gk" ? [{ value: "docs", label: "docs" }] : null),
 		});
 	});
 
@@ -255,11 +255,11 @@ describe("prompt action autocomplete", () => {
 			moveCursorToLineEnd: () => {},
 		});
 
-		const line = "/btw omp://";
+		const line = "/btw gk://";
 		const suggestions = await provider.getSuggestions([line], 0, line.length);
 
 		expect(suggestions).not.toBeNull();
-		expect(suggestions?.prefix).toBe("omp://");
+		expect(suggestions?.prefix).toBe("gk://");
 		expect(suggestions?.items.length).toBeGreaterThan(0);
 	});
 
@@ -284,11 +284,11 @@ describe("prompt action autocomplete", () => {
 			moveCursorToLineEnd: () => {},
 		});
 
-		const line = "/mcp omp://";
+		const line = "/mcp gk://";
 		const suggestions = await provider.getSuggestions([line], 0, line.length);
 
 		expect(suggestions).not.toBeNull();
-		expect(suggestions?.prefix).toBe("omp://");
+		expect(suggestions?.prefix).toBe("gk://");
 		expect(suggestions?.items.length).toBeGreaterThan(0);
 	});
 

@@ -518,25 +518,25 @@ describe("jfind cascade", () => {
 
 	it("resolves URL scopes in place and rejects unknown docs and range selectors before judging", async () => {
 		const filesystem = urlFs(process.cwd());
-		expect(await resolveSearchRoot(filesystem, "omp://", process.cwd())).toEqual({
-			path: "omp://",
+		expect(await resolveSearchRoot(filesystem, "gk://", process.cwd())).toEqual({
+			path: "gk://",
 			type: "directory",
 		});
-		expect(await resolveSearchRoot(filesystem, "omp://tools/read.md", process.cwd())).toMatchObject({
-			path: "omp://tools/read.md",
+		expect(await resolveSearchRoot(filesystem, "gk://tools/read.md", process.cwd())).toMatchObject({
+			path: "gk://tools/read.md",
 			type: "file",
 		});
-		await expect(resolveSearchRoot(filesystem, "omp://nope.md", process.cwd())).rejects.toThrow(
-			"Path not found: omp://nope.md",
+		await expect(resolveSearchRoot(filesystem, "gk://nope.md", process.cwd())).rejects.toThrow(
+			"Path not found: gk://nope.md",
 		);
-		await expect(resolveSearchRoot(filesystem, "omp://tools/read.md:1-10", process.cwd())).rejects.toThrow(
+		await expect(resolveSearchRoot(filesystem, "gk://tools/read.md:1-10", process.cwd())).rejects.toThrow(
 			"line-range selectors are not supported",
 		);
 	});
 
-	it("searches a single omp doc in place and reports hits as its URL", async () => {
+	it("searches a single gk doc in place and reports hits as its URL", async () => {
 		const filesystem = urlFs(process.cwd());
-		const root = await resolveSearchRoot(filesystem, "omp://tools/read.md", process.cwd());
+		const root = await resolveSearchRoot(filesystem, "gk://tools/read.md", process.cwd());
 		const result = await runCascade({
 			root,
 			filesystem,
@@ -546,14 +546,14 @@ describe("jfind cascade", () => {
 			includeHidden: false,
 		});
 		expect(result.stats.listed).toBe(1);
-		expect(result.hits.map(hit => resolveSearchResultPath(root.path, hit.rel))).toEqual(["omp://tools/read.md"]);
+		expect(result.hits.map(hit => resolveSearchResultPath(root.path, hit.rel))).toEqual(["gk://tools/read.md"]);
 	});
 
-	it("walks the omp root in place: every embedded doc is listed and hits resolve to doc URLs", async () => {
-		const completions = (await InternalUrlRouter.instance().complete("omp", "")) ?? [];
+	it("walks the gk root in place: every embedded doc is listed and hits resolve to doc URLs", async () => {
+		const completions = (await InternalUrlRouter.instance().complete("gk", "")) ?? [];
 		const docs = new Set(completions.map(completion => completion.value));
 		const filesystem = urlFs(process.cwd());
-		const root = await resolveSearchRoot(filesystem, "omp://", process.cwd());
+		const root = await resolveSearchRoot(filesystem, "gk://", process.cwd());
 		const judge = new FakeJudge((request, key) => {
 			const state = stateOf(request);
 			if ("tree" in state) return String(state.tree).includes(`${key} read.md`) ? 0.9 : 0.1;
@@ -572,7 +572,7 @@ describe("jfind cascade", () => {
 			includeHidden: false,
 		});
 		expect(result.stats.listed).toBe(docs.size);
-		expect(result.hits.map(hit => resolveSearchResultPath(root.path, hit.rel))).toEqual(["omp://tools/read.md"]);
+		expect(result.hits.map(hit => resolveSearchResultPath(root.path, hit.rel))).toEqual(["gk://tools/read.md"]);
 	});
 
 	it("rejects a missing scope path or a line selector before spending any judgment", async () => {
@@ -590,7 +590,7 @@ describe("jfind cascade", () => {
 				"Path not found: nope",
 			);
 			await expect(
-				tool.execute("x", { query: "anything", grep_keywords: [], path: "omp://tools/read.md:1-10" }),
+				tool.execute("x", { query: "anything", grep_keywords: [], path: "gk://tools/read.md:1-10" }),
 			).rejects.toThrow("line-range selectors are not supported");
 		} finally {
 			await removeWithRetries(dir);

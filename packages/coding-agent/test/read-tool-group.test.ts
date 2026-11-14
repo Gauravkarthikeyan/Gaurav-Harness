@@ -459,7 +459,7 @@ describe("readArgsCollapseIntoGroup", () => {
 	it.each([
 		["skill://my-skill"],
 		["skill://my-skill/file.md"],
-		["omp://docs/tools/read.md"],
+		["gk://docs/tools/read.md"],
 		["issue://123"],
 		["pr://can1357/oh-my-pi/456"],
 		["agent://abc"],

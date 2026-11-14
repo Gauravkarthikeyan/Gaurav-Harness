@@ -6,6 +6,9 @@ import * as path from "node:path";
 import { getDocFilenames, getEmbeddedDoc } from "./docs-index";
 import type { InternalUrl, ResolveContext } from "./types";
 
+/** gk: harness-docs scheme (upstream `omp://`), renamed so the agent never sees the upstream brand. */
+export const DOCS_SCHEME = "gk";
+
 /** Host + path of an `omp://` URL, exactly as the handler reads it; `""` when the URL names the docs root. */
 export function ompDocFilename(url: InternalUrl): string {
 	const host = url.rawHost || url.hostname;
@@ -21,10 +24,10 @@ export function ompDocFilename(url: InternalUrl): string {
 export function ompDocRel(url: InternalUrl): string {
 	const filename = ompDocFilename(url);
 	if (filename.length === 0) return "";
-	if (path.isAbsolute(filename)) throw new Error("Absolute paths are not allowed in omp:// URLs");
+	if (path.isAbsolute(filename)) throw new Error(`Absolute paths are not allowed in ${DOCS_SCHEME}:// URLs`); // gk: scheme rename
 	const normalized = path.posix.normalize(filename.replaceAll("\\", "/"));
 	if (normalized === ".." || normalized.startsWith("../") || normalized.includes("/../")) {
-		throw new Error("Path traversal (..) is not allowed in omp:// URLs");
+		throw new Error(`Path traversal (..) is not allowed in ${DOCS_SCHEME}:// URLs`); // gk: scheme rename
 	}
 	if (normalized === "." || normalized === "docs") return "";
 	return normalized.startsWith("docs/") ? normalized.slice("docs/".length) : normalized;
@@ -48,7 +51,7 @@ export async function ompDocsScopeEntries(context?: ResolveContext): Promise<Omp
 		context?.signal?.throwIfAborted();
 		const content = await getEmbeddedDoc(rel);
 		if (content === undefined) continue;
-		entries.push({ url: `omp://${rel}`, content });
+		entries.push({ url: `${DOCS_SCHEME}://${rel}`, content }); // gk: scheme rename
 	}
 	return entries;
 }
