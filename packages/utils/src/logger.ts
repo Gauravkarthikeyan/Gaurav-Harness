@@ -20,7 +20,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { isPromise } from "node:util/types";
-import { getLogsDir, localDay } from "./dirs";
+import { APP_NAME, getLogsDir, localDay } from "./dirs"; // gk: APP_NAME names log files
 import { RotatingFileSink } from "./logger/rotating-file";
 import { isPidAlive } from "./pid";
 import { setStderrRedirectTarget } from "./stderr-guard";
@@ -172,7 +172,8 @@ function dispatchToSinks(event: LogEvent): void {
 	}
 }
 
-const PROCESS_LOG_PATTERN = /^omp\.(\d{4}-\d{2}-\d{2})\.(\d+)\.log(?:\.(\d+))?$/;
+// gk: log files are `<APP_NAME>.<day>.<pid>.log`, matching getLogPath() (was a hard-coded `omp` prefix).
+const PROCESS_LOG_PATTERN = new RegExp(`^${APP_NAME}\\.(\\d{4}-\\d{2}-\\d{2})\\.(\\d+)\\.log(?:\\.(\\d+))?$`);
 /** Per-process audit files written by earlier releases; current sinks track rotations in memory. */
 const PROCESS_AUDIT_PATTERN = /^\.omp\.(\d+)-audit\.json$/;
 /** Shared daily logs (plain, size-rolled, or gzipped) written by the winston-era logger. */
@@ -442,7 +443,7 @@ function makeFileTransport(dir?: string): RotatingFileSink {
 	// The sink opens (and creates) its file on the first batch written.
 	return new RotatingFileSink({
 		directory: logsDir,
-		filenamePrefix: "omp",
+		filenamePrefix: APP_NAME, // gk: was "omp"; keeps the sink and getLogPath() on one file name
 		filenameSuffix: String(process.pid),
 		maxBytes: 10 * 1024 * 1024,
 		maxFiles: 5,

@@ -14,7 +14,8 @@ if (date.getTimezoneOffset() === 0 || localDay(date) === date.toISOString().slic
 	process.exit(2);
 }
 const basename = getLogPath(date, 7).replace(/.*[/\\]/, "");
-if (basename !== `omp.${localDay(date)}.7.log`) {
+// gk: APP_NAME log prefix
+if (basename !== `gk.${localDay(date)}.7.log`) {
 	console.error(`getLogPath used the UTC day key: ${basename}`);
 	process.exit(1);
 }
