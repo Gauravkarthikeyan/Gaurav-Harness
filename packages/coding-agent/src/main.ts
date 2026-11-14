@@ -204,6 +204,8 @@ import { cfgDisabledProviders, cfgEnabledModels } from "./config/model-settings"
 import { cfgTaskAgentIdleTtlMs } from "./task/settings";
 import { cfgSkillsIncludeSkills } from "./extensibility/settings";
 import { cfgWorkspaceAdditionalDirectories } from "./session/context-settings";
+import { formatGkVersion } from "./gk/brand"; // gk: version string
+import { takeOmpImportNotice } from "./gk/import-omp"; // gk: first-run omp profile import notice
 
 type RunAcpMode = (createSession: AcpSessionFactory) => Promise<never>;
 type RunPrintMode = (session: AgentSession, options: PrintModeOptions) => Promise<number>;
@@ -1858,9 +1860,11 @@ export async function runRootCommand(
 		}
 
 		const notifs: (InteractiveModeNotify | null)[] = [];
+		const ompImportNotice = takeOmpImportNotice(); // gk: surface the first-run omp import result
+		if (ompImportNotice) notifs.push(ompImportNotice);
 
 		if (parsedArgs.version) {
-			writeStartupNotice(parsedArgs, `${VERSION}\n`);
+			writeStartupNotice(parsedArgs, `${formatGkVersion(VERSION)}\n`); // gk: version string
 			process.exit(0);
 		}
 

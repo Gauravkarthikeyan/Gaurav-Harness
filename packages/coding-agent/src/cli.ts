@@ -48,6 +48,8 @@ import {
 import type * as JsProcessEntry from "./eval/js/process-entry";
 import type { WorkerInbound as JsWorkerInbound, WorkerOutbound as JsWorkerOutbound } from "./eval/js/worker-protocol";
 import { startParentWatchdog } from "./subprocess/parent-watchdog";
+import { formatGkVersion } from "./gk/brand"; // gk: version string
+import { offerOmpProfileImport } from "./gk/import-omp"; // gk: first-run omp profile import
 
 if (Bun.semver.order(Bun.version, MIN_BUN_VERSION) < 0) {
 	process.stderr.write(
@@ -555,6 +557,11 @@ export async function runCli(argv: string[]): Promise<void> {
 		process.stdout.write(formatLicenseOutput());
 		return;
 	}
+	// gk: `gk-code <version> (omp <upstream>)` instead of run()'s `<bin>/<version>`.
+	if (resolvedArgv[0] === "--version" || resolvedArgv[0] === "-v") {
+		process.stdout.write(`${formatGkVersion(VERSION)}\n`);
+		return;
+	}
 	const helpOrVersion =
 		resolvedArgv[0] === "--help" ||
 		resolvedArgv[0] === "-h" ||
@@ -567,6 +574,17 @@ export async function runCli(argv: string[]): Promise<void> {
 	// A failed install is reported once the launch has a warning sink (`main.ts`,
 	// `ensureSqliteLockShim`); this module stays free of pi-utils' env snapshot.
 	if (isProcessEntry && !helpOrVersion) installSqliteLockShim();
+	// gk: offer the one-time ~/.omp/agent import before the prepaint composer or settings create ~/.gk.
+	if (
+		isProcessEntry &&
+		!helpOrVersion &&
+		process.stdin.isTTY === true &&
+		process.stdout.isTTY === true &&
+		!process.env.PI_CONFIG_DIR &&
+		!getActiveProfile()
+	) {
+		await offerOmpProfileImport(resolvedArgv);
+	}
 	let stopStartupComposer: (() => void) | undefined;
 	if (
 		!process.env.PI_TIMING &&

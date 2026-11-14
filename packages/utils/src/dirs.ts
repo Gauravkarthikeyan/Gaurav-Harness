@@ -20,13 +20,13 @@ import { isEnoent, isEnotdir } from "./fs-error";
 import { isBunTestRuntime } from "./test-runtime";
 
 /** App name (e.g. "omp") */
-export const APP_NAME: string = "omp";
+export const APP_NAME: string = "gk"; // gk: rebrand (omp → gk)
 
 /** Public homepage that inference gateways (OpenRouter, Vercel AI Gateway) credit omp traffic to. */
-export const APP_URL: string = "https://omp.sh/";
+export const APP_URL: string = "https://github.com/Gauravkarthikeyan"; // gk: rebrand
 
 /** Config directory name (e.g. ".omp") */
-export const CONFIG_DIR_NAME: string = ".omp";
+export const CONFIG_DIR_NAME: string = ".gk"; // gk: rebrand (~/.omp → ~/.gk)
 
 /** Ordered main settings filenames: canonical write target first, legacy-compatible YAML fallback second. */
 export const MAIN_CONFIG_FILENAMES = ["config.yml", "config.yaml"] as const;

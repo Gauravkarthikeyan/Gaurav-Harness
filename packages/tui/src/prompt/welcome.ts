@@ -433,16 +433,18 @@ export function lockupNode(version: string, update: VersionUpdate | null = null)
 }
 
 /** Block-grid brand mark shared by the welcome and setup surfaces. */
-export const PI_LOGO = ["████████████", "   ██  ██   ", "   ██  ██   ", "   ▒▒  ██   ", "       ██   "];
+// gk: GK block mark (was omp's π grid); 5 rows × 12 columns like the original.
+export const PI_LOGO = [" ████  █   █", "█      █  █ ", "█  ██  ███  ", "█   █  █  █ ", " ████  █   █"];
 
 /** Columns of {@link PI_LOGO}. */
 const LOGO_WIDTH = Math.max(...PI_LOGO.map(row => row.length));
 
 /**
- * The `omp` wordmark in half-blocks, set beside {@link PI_LOGO} from its second
- * row: the `p` descends into the fourth, the version takes the fifth.
+ * The `gk` wordmark in half-blocks, set beside {@link PI_LOGO} from its second
+ * row: the `g` descends into the fourth, the version takes the fifth.
  */
-const WORDMARK = ["▄▀▀▄ █▀▄▀▄ █▀▀▄", "▀▄▄▀ █ █ █ █▄▄▀", "           █"];
+// gk: `gk` wordmark (was `omp`).
+const WORDMARK = ["▄▀▀▄ █ ▄▀", "▀▄▄█ █▀▄ ", "▄▄▄▀"];
 
 /** Columns of {@link WORDMARK}. */
 const WORDMARK_WIDTH = Math.max(...WORDMARK.map(row => row.length));

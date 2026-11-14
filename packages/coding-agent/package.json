@@ -25,7 +25,8 @@
 		"directory": "packages/coding-agent"
 	},
 	"bin": {
-		"omp": "src/cli.ts"
+		"gk-code": "src/cli.ts",
+		"gk": "src/cli.ts"
 	},
 	"files": [
 		"src",
