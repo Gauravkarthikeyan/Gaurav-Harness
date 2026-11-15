@@ -1,0 +1,12 @@
+// AI Credits (aicredits.in): OpenAI-compatible gateway billed in INR. Its public
+// `/v1/models` roster lists proprietary models too; discovery keeps only
+// open-weight families (see `isOpenWeightModelId` in
+// `src/provider-models/open-weight.ts`).
+
+provider "aicredits" {
+	default-model "moonshotai/kimi-k2.6"
+	env "AICREDITS_API_KEY"
+	dynamic-models-authoritative #true
+	allow-unauthenticated #true
+	discovery label="AI Credits" allow-unauthenticated=#true
+}

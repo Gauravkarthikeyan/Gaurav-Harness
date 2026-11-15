@@ -1,0 +1,11 @@
+auth "aicredits" {
+	name "AI Credits"
+	login "api-key" {
+		auth-url "https://aicredits.in/dashboard/keys"
+		instructions "Create an API key in the AI Credits dashboard (shown once, starts with sk-)"
+		prompt "Paste your AI Credits API key" placeholder="sk-..."
+		// `/v1/models` is public and accepts any key; the wallet-balance endpoint
+		// is key-protected and free to call.
+		validate "models-endpoint" label="AI Credits" url="https://api.aicredits.in/api/v1/credits"
+	}
+}

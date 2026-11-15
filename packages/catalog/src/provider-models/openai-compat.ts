@@ -70,6 +70,7 @@ import { getDefaultModelDiscoveryBaseUrl, resolveModelCacheProviderId } from "./
 import { getClinePassModelMetadata } from "./cline-pass";
 import type { ModelManagerConfig } from "./descriptor-types";
 import { filterModelsDevCatalogRows } from "./models-dev-policies";
+import { isOpenWeightModelId } from "./open-weight";
 
 function isGlmReasoningIdentity(provider: string, modelId: string, floor: string): boolean {
 	const identity = classifyModel(provider, modelId, { lenient: true });
@@ -1582,6 +1583,71 @@ export function novitaModelManagerOptions(
 			);
 		},
 		mapModel: mapNovitaModel,
+	});
+}
+
+// ---------------------------------------------------------------------------
+// AI Credits
+// ---------------------------------------------------------------------------
+
+export const AICREDITS_BASE_URL = "https://api.aicredits.in/v1";
+
+export interface AiCreditsModelManagerConfig {
+	apiKey?: string;
+	baseUrl?: string;
+	fetch?: FetchImpl;
+}
+
+/** AI Credits quotes USD per token; the catalog stores USD per million. Rounds off float noise (`8.000000000000001E-7`). */
+function aiCreditsCostPerMillion(value: unknown, fallback: number): number {
+	const rate = toPositiveNumber(value, 0);
+	return rate > 0 ? Math.round(rate * 1e12) / 1e6 : fallback;
+}
+
+export function mapAiCreditsModel(
+	entry: OpenAICompatibleModelRecord,
+	defaults: ModelSpec<"openai-completions">,
+	reference: ModelSpec<"openai-completions"> | undefined,
+): ModelSpec<"openai-completions"> {
+	const model = mapWithBundledReference(entry, defaults, reference);
+	return {
+		...model,
+		input: Array.isArray(entry.input_modalities) ? toInputCapabilities(entry.input_modalities) : model.input,
+		cost: {
+			input: aiCreditsCostPerMillion(entry.input_cost_per_token, model.cost.input),
+			output: aiCreditsCostPerMillion(entry.output_cost_per_token, model.cost.output),
+			cacheRead: aiCreditsCostPerMillion(entry.cached_input_cost_per_token, model.cost.cacheRead),
+			cacheWrite: model.cost.cacheWrite,
+		},
+	};
+}
+
+function isAiCreditsChatEntry(entry: OpenAICompatibleModelRecord): boolean {
+	return (
+		entry.is_active !== false &&
+		entry.mode === "chat" &&
+		Array.isArray(entry.supported_apis) &&
+		entry.supported_apis.includes("chat_completions")
+	);
+}
+
+/**
+ * Builds AI Credits' model-discovery manager from its public `/v1/models`
+ * roster. The gateway also resells proprietary models; the owner restricts
+ * this provider to open-weight ones, enforced by `isOpenWeightModelId`
+ * (`./open-weight.ts`).
+ */
+export function aiCreditsModelManagerOptions(
+	config?: AiCreditsModelManagerConfig,
+): ModelManagerOptions<"openai-completions"> {
+	return createOpenAICompatibleModelManagerOptions({
+		api: "openai-completions",
+		providerId: "aicredits",
+		defaultBaseUrl: AICREDITS_BASE_URL,
+		config,
+		dynamicModelsAuthoritative: true,
+		filterModel: (entry, model) => isAiCreditsChatEntry(entry) && isOpenWeightModelId(model.id),
+		mapModel: mapAiCreditsModel,
 	});
 }
 

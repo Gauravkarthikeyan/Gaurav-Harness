@@ -18,6 +18,7 @@ import { ollamaCloudModelManagerOptions } from "./ollama";
 import {
 	abliterationModelManagerOptions,
 	aiandModelManagerOptions,
+	aiCreditsModelManagerOptions,
 	aimlApiModelManagerOptions,
 	alibabaCodingPlanModelManagerOptions,
 	alibabaTokenPlanModelManagerOptions,
@@ -104,6 +105,7 @@ type ModelManagerFactory = (config: ModelManagerConfig) => ModelManagerOptions<A
 const MODEL_MANAGER_FACTORIES: Readonly<Partial<Record<KnownProvider, ModelManagerFactory>>> = {
 	abliteration: config => abliterationModelManagerOptions(config),
 	aiand: config => aiandModelManagerOptions(config),
+	aicredits: config => aiCreditsModelManagerOptions(config),
 	aimlapi: config => aimlApiModelManagerOptions(config),
 	"alibaba-coding-plan": config => alibabaCodingPlanModelManagerOptions(config),
 	"alibaba-token-plan": config => alibabaTokenPlanModelManagerOptions(config),

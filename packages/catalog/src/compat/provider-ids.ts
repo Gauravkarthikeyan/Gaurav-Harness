@@ -4,6 +4,7 @@
 export type KnownProvider =
 	| "abliteration"
 	| "aiand"
+	| "aicredits"
 	| "aimlapi"
 	| "alibaba-coding-plan"
 	| "alibaba-token-plan"

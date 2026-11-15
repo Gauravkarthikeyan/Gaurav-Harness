@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the AI Credits (`aicredits`) provider with `/login aicredits` and `AICREDITS_API_KEY`. Models are discovered from the public `/v1/models` roster with per-model USD pricing, and the list is restricted to open-weight model families.
+
 ## [18.20.1] - 2026-11-14
 
 ### Added
