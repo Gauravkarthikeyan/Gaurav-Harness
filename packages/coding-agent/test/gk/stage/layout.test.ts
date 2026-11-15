@@ -333,4 +333,19 @@ describe("layoutStage invariants", () => {
 		const layout = layoutStage({ cols: 120, rows: 40, preset: "calm", tiles });
 		expectValidTiling(layout);
 	});
+
+	it("tiles worker commands as top-level siblings while keeping lineage", () => {
+		const store = new TileStore({ now: () => 0 });
+		store.add({ id: "main", kind: "transcript" });
+		store.add({ id: "ada", kind: "agent", parentId: "main" });
+		store.add({ id: "scout", kind: "agent", parentId: "ada" });
+		store.add({ id: "cmd", kind: "command", parentId: "ada" });
+		const tiles = toLayoutTiles(store, 0);
+		const cmd = tiles.find(t => t.id === "cmd");
+		expect(cmd?.parentId).toBe("ada");
+		expect(cmd?.layoutParentId).toBeNull();
+		expect(tiles.find(t => t.id === "scout")?.layoutParentId).toBe("ada");
+		const layout = layoutStage({ cols: 212, rows: 58, preset: "orchestra", tiles });
+		expect(layout.order).toEqual(["main", "ada", "scout", "cmd"]);
+	});
 });

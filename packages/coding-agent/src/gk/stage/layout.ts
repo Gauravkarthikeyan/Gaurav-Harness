@@ -22,6 +22,11 @@ export interface LayoutTile {
 	id: string;
 	kind: TileKind;
 	parentId: string | null;
+	/**
+	 * Parent used for tiling only (defaults to `parentId`). Lets lineage children such as a worker's
+	 * commands sit as top-level panes while keeping their real lineage for titles and badges.
+	 */
+	layoutParentId?: string | null;
 	weight: number;
 	createdAt: number;
 	lastActivityAt: number;
@@ -101,6 +106,13 @@ const CALM_PASSIVE_KINDS: ReadonlySet<TileKind> = new Set<TileKind>(["proc", "te
 
 function clamp(value: number, lo: number, hi: number): number {
 	return Math.max(lo, Math.min(hi, value));
+}
+
+/** Kinds tiled as top-level panes regardless of which agent started them (reference Stage). */
+const FLAT_KINDS: ReadonlySet<TileKind> = new Set<TileKind>(["command", "web", "diff"]);
+
+function layoutParent(tile: LayoutTile): string | null {
+	return tile.layoutParentId !== undefined ? tile.layoutParentId : tile.parentId;
 }
 
 function compareCreated(a: LayoutTile, b: LayoutTile): number {
@@ -346,11 +358,12 @@ function attempt(input: StageLayoutInput, demoted: ReadonlySet<string>): Attempt
 	for (const t of treeTiles) items.set(t.id, { tile: t, children: [], own: false });
 	const roots: Item[] = [];
 	for (const item of items.values()) {
-		let parentId = item.tile.parentId;
+		let parentId = layoutParent(item.tile);
 		const seen = new Set<string>([item.tile.id]);
 		while (parentId !== null && !inTree.has(parentId) && !seen.has(parentId)) {
 			seen.add(parentId);
-			parentId = all.get(parentId)?.parentId ?? null;
+			const ancestor = all.get(parentId);
+			parentId = ancestor ? layoutParent(ancestor) : null;
 		}
 		const parent = parentId !== null && !seen.has(parentId) ? items.get(parentId) : undefined;
 		(parent ? parent.children : roots).push(item);
@@ -447,7 +460,8 @@ export function layoutStage(input: StageLayoutInput): StageLayout {
 			while (grew) {
 				grew = false;
 				for (const t of input.tiles) {
-					if (!demoted.has(t.id) && t.parentId !== null && demoted.has(t.parentId) && byId.has(t.parentId)) {
+					const parentId = layoutParent(t);
+					if (!demoted.has(t.id) && parentId !== null && demoted.has(parentId) && byId.has(parentId)) {
 						demoted.add(t.id);
 						grew = true;
 					}
@@ -467,6 +481,7 @@ export function toLayoutTiles(
 		id: tile.id,
 		kind: tile.kind,
 		parentId: tile.parentId,
+		layoutParentId: FLAT_KINDS.has(tile.kind) ? null : tile.parentId,
 		weight: attentionWeight(tile, now),
 		createdAt: tile.createdAt,
 		lastActivityAt: tile.lastActivityAt,
