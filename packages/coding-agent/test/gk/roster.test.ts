@@ -9,7 +9,9 @@ import {
 	defaultTier,
 	estimateCostUsd,
 	loadRosterOverrides,
+	patchRosterOverride,
 	SIZE_TOKENS,
+	saveRosterOverrides,
 } from "../../src/gk/roster";
 
 describe("SIZE_TOKENS", () => {
@@ -154,6 +156,62 @@ describe("loadRosterOverrides", () => {
 		} finally {
 			warn.mockRestore();
 		}
+	});
+});
+
+describe("saveRosterOverrides", () => {
+	const dirs: string[] = [];
+	const tempDir = (): string => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gk-"));
+		dirs.push(dir);
+		return dir;
+	};
+
+	afterEach(() => {
+		for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("round-trips through loadRosterOverrides, creating parent dirs", async () => {
+		const file = path.join(tempDir(), "agent", "roster.yml");
+		const overrides = [
+			{ selector: "anthropic/claude-haiku-5-5", tier: 1 as const, strengths: ["tests" as const, "docs" as const] },
+			{ selector: "local/gemma-3-1b", enabled: false, maxConcurrent: 3 },
+		];
+		await saveRosterOverrides(file, overrides);
+		expect(await loadRosterOverrides(file)).toEqual(overrides);
+		expect(fs.readdirSync(path.dirname(file))).toEqual(["roster.yml"]);
+	});
+
+	it("keeps other top-level keys and replaces models", async () => {
+		const file = path.join(tempDir(), "roster.yml");
+		fs.writeFileSync(file, "note: keep me\nmodels:\n  - selector: old/model\n    tier: 3\n");
+		await saveRosterOverrides(file, [{ selector: "new/model", enabled: false }]);
+		const doc = Bun.YAML.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+		expect(doc).toEqual({ note: "keep me", models: [{ selector: "new/model", enabled: false }] });
+	});
+
+	it("refuses to overwrite a file that is not a YAML mapping", async () => {
+		const file = path.join(tempDir(), "roster.yml");
+		fs.writeFileSync(file, "- just\n- a list\n");
+		await expect(saveRosterOverrides(file, [])).rejects.toThrow("not a YAML mapping");
+		expect(fs.readFileSync(file, "utf8")).toBe("- just\n- a list\n");
+	});
+});
+
+describe("patchRosterOverride", () => {
+	it("merges patches into one entry per selector", () => {
+		let overrides = patchRosterOverride([], "a/b", { tier: 2 });
+		overrides = patchRosterOverride(overrides, "a/b", { enabled: false });
+		overrides = patchRosterOverride(overrides, "c/d", { maxConcurrent: 4 });
+		expect(overrides).toEqual([
+			{ selector: "a/b", tier: 2, enabled: false },
+			{ selector: "c/d", maxConcurrent: 4 },
+		]);
+	});
+
+	it("drops the default enabled: true and removes entries left empty", () => {
+		const disabled = patchRosterOverride([], "a/b", { enabled: false });
+		expect(patchRosterOverride(disabled, "a/b", { enabled: true })).toEqual([]);
 	});
 });
 

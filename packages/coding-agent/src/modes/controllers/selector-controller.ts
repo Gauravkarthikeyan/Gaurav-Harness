@@ -117,6 +117,7 @@ import { createExtensionDashboardRuntime } from "../components/extensions/dashbo
 import { HistorySearchComponent } from "@oh-my-pi/pi-tui/overlays/history-search";
 import { HookEditorComponent } from "@oh-my-pi/pi-tui/overlays/hook-editor";
 import { ModelHubComponent, type ModelRoleSelectionScope } from "@oh-my-pi/pi-tui/overlays/model-hub";
+import { ModelsScreenComponent } from "../../gk/ui/models-screen-controller"; // gk: models screen
 import { createModelBrowserSource } from "../model-browser-source";
 import { formatSessionContinuationNotice } from "../persistence-failure";
 import { ModelPickerComponent } from "@oh-my-pi/pi-tui/overlays/model-picker";
@@ -179,7 +180,8 @@ type MenuKind =
 	| "model-hub"
 	| "agents-dashboard"
 	| "agent-hub"
-	| "usage-dashboard";
+	| "usage-dashboard"
+	| "gk-models"; // gk: models & providers screen
 
 /** An open menu: registered when the request runs, filled once its component mounts. */
 interface OpenMenu {
@@ -736,6 +738,49 @@ export class SelectorController {
 		this.#showModelHub({});
 	}
 
+	/** gk: `/models` — the Models & providers screen (roster, roles, provider status). */
+	async showGkModelsScreen(): Promise<void> {
+		if (this.#focusOpenMenu("gk-models")) return;
+		const menu = this.#claimMenu("gk-models");
+		let closed = false;
+		const done = () => {
+			if (closed) return;
+			closed = true;
+			menu.handle?.hide();
+			this.#releaseMenu("gk-models", menu);
+			this.focusActiveEditorArea();
+			this.ctx.ui.requestRender();
+		};
+		let screen: ModelsScreenComponent;
+		try {
+			screen = await ModelsScreenComponent.create(this.ctx.ui, {
+				registry: this.ctx.session.modelRegistry,
+				settings: this.ctx.settings,
+				assignRole: (model, role, selector) => this.#assignModelRole(model, role, undefined, selector, undefined),
+				login: provider => {
+					done();
+					void this.#loginFromModelsScreen(provider);
+				},
+				close: done,
+				showError: message => this.ctx.showError(message),
+			});
+		} catch (error) {
+			this.#releaseMenu("gk-models", menu);
+			throw error;
+		}
+		this.#mountMenu(menu, screen, () => this.#showFullscreenMenu(screen));
+	}
+
+	/** OAuth providers log in directly and reopen the screen; anything else opens the /login chooser. */
+	async #loginFromModelsScreen(provider: string | undefined): Promise<void> {
+		const { getOAuthProviders } = await loadProviderAuthUi();
+		if (provider && getOAuthProviders().some(p => p.id === provider)) {
+			if (await this.#handleOAuthLogin(provider)) await this.showGkModelsScreen();
+			return;
+		}
+		await this.showOAuthSelector("login");
+	}
+
 	/**
 	 * Session-only model switch (`/switch <selector>`) for the viewed session:
 	 * applies the resolved model without persisting it. Compacts first when the
@@ -925,6 +970,98 @@ export class SelectorController {
 	}
 
 	/**
+	 * Persist a role assignment (the model hub's and the gk Models screen's shared path). The
+	 * default role also switches the live session. `afterMutation` runs once settings are written.
+	 */
+	async #assignModelRole(
+		model: Model,
+		role: string,
+		thinkingLevel: ConfiguredThinkingLevel | undefined,
+		selector: string,
+		scope: ModelRoleSelectionScope | undefined,
+		afterMutation?: () => void,
+	): Promise<boolean> {
+		const releaseDefaultMutation = role === "default" ? await this.#acquireDefaultRoleMutation() : undefined;
+		const configuredStorage = cfgModelRoleStorage.get(this.ctx.settings);
+		const targetScope = configuredStorage === "project" ? (scope ?? "project") : "global";
+		const selectorValue = selector ?? `${model.provider}/${model.id}`;
+		const scopeLabel = configuredStorage === "project" ? `${targetScope === "project" ? "Project" : "Global"} ` : "";
+		const defaultStatusLabel = configuredStorage === "project" ? `${scopeLabel}default` : "Default";
+		try {
+			if (role === "default") {
+				// `auto` on the default role configures the active session. Other roles
+				// persist an explicit `:auto` suffix and must not mutate the current model.
+				const isAuto = thinkingLevel === AUTO_THINKING;
+				const concreteThinking = isAuto || thinkingLevel === undefined ? undefined : thinkingLevel;
+				const effectiveProvenance = this.ctx.settings.getModelRoleProvenance("default");
+				const shadowedGlobal =
+					configuredStorage === "project" &&
+					targetScope === "global" &&
+					(effectiveProvenance === "project" ||
+						effectiveProvenance === "overlay" ||
+						(effectiveProvenance === "runtime" &&
+							this.ctx.settings.isProjectModelRoleRuntimeOverrideActive("default")));
+				const shadowedProject =
+					configuredStorage === "project" && targetScope === "project" && effectiveProvenance === "overlay";
+				if (shadowedGlobal) {
+					this.ctx.settings.setModelRole("default", formatModelSelectorValue(selectorValue, concreteThinking));
+					if (isAuto) {
+						cfgDefaultThinkingLevel.set(this.ctx.settings, AUTO_THINKING);
+					}
+				} else if (shadowedProject) {
+					this.ctx.settings.setProjectModelRole(
+						"default",
+						formatModelSelectorValue(selectorValue, concreteThinking),
+					);
+					if (isAuto) {
+						cfgDefaultThinkingLevel.set(this.ctx.settings, AUTO_THINKING);
+					}
+				} else {
+					const { switched } = await this.ctx.session.setModel(model, role, {
+						selector,
+						thinkingLevel: isAuto ? ThinkingLevel.Inherit : concreteThinking,
+						persist: targetScope === "global",
+					});
+					if (!switched) return false;
+					if (targetScope === "project") {
+						this.ctx.settings.setProjectModelRole(
+							"default",
+							formatModelSelectorValue(selectorValue, concreteThinking),
+						);
+					}
+					if (isAuto) {
+						this.ctx.session.setThinkingLevel(AUTO_THINKING, true);
+					} else if (concreteThinking && concreteThinking !== ThinkingLevel.Inherit) {
+						this.ctx.session.setThinkingLevel(concreteThinking);
+					}
+					this.ctx.statusLine.invalidate();
+					this.ctx.updateEditorBorderColor();
+				}
+				this.ctx.showStatus(`${defaultStatusLabel} model: ${selector ?? model.id}`);
+			} else {
+				// Other roles (smol, slow, custom): update settings, not the current model.
+				const modelRoleValue = formatModelSelectorValue(selectorValue, thinkingLevel);
+				if (targetScope === "project") {
+					this.ctx.settings.setProjectModelRole(role, modelRoleValue);
+				} else {
+					this.ctx.settings.setModelRole(role, modelRoleValue);
+				}
+				const roleInfo = getRoleInfo(role, settings);
+				this.ctx.showStatus(
+					`${scopeLabel}${roleInfo?.tag ?? roleInfo?.name ?? role} model: ${selector ?? model.id}`,
+				);
+			}
+			return true;
+		} catch (error) {
+			this.ctx.showError(error instanceof Error ? error.message : String(error));
+			return false;
+		} finally {
+			releaseDefaultMutation?.();
+			afterMutation?.();
+		}
+	}
+
+	/**
 	 * Fullscreen model hub on the alternate screen (the /settings idiom): the
 	 * overlay enables mouse tracking for its lifetime and the transcript stays
 	 * untouched underneath. `initialProviderId` preselects a provider's sidebar
@@ -950,92 +1087,10 @@ export class SelectorController {
 			this.ctx.session.modelRegistry,
 			this.ctx.session.scopedModels,
 			{
-				onAssign: async (model, role, thinkingLevel, selector, scope?: ModelRoleSelectionScope) => {
-					const releaseDefaultMutation = role === "default" ? await this.#acquireDefaultRoleMutation() : undefined;
-					const configuredStorage = cfgModelRoleStorage.get(this.ctx.settings);
-					const targetScope = configuredStorage === "project" ? (scope ?? "project") : "global";
-					const selectorValue = selector ?? `${model.provider}/${model.id}`;
-					const scopeLabel =
-						configuredStorage === "project" ? `${targetScope === "project" ? "Project" : "Global"} ` : "";
-					const defaultStatusLabel = configuredStorage === "project" ? `${scopeLabel}default` : "Default";
-					try {
-						if (role === "default") {
-							// `auto` on the default role configures the active session. Other roles
-							// persist an explicit `:auto` suffix and must not mutate the current model.
-							const isAuto = thinkingLevel === AUTO_THINKING;
-							const concreteThinking = isAuto || thinkingLevel === undefined ? undefined : thinkingLevel;
-							const effectiveProvenance = this.ctx.settings.getModelRoleProvenance("default");
-							const shadowedGlobal =
-								configuredStorage === "project" &&
-								targetScope === "global" &&
-								(effectiveProvenance === "project" ||
-									effectiveProvenance === "overlay" ||
-									(effectiveProvenance === "runtime" &&
-										this.ctx.settings.isProjectModelRoleRuntimeOverrideActive("default")));
-							const shadowedProject =
-								configuredStorage === "project" &&
-								targetScope === "project" &&
-								effectiveProvenance === "overlay";
-							if (shadowedGlobal) {
-								this.ctx.settings.setModelRole(
-									"default",
-									formatModelSelectorValue(selectorValue, concreteThinking),
-								);
-								if (isAuto) {
-									cfgDefaultThinkingLevel.set(this.ctx.settings, AUTO_THINKING);
-								}
-							} else if (shadowedProject) {
-								this.ctx.settings.setProjectModelRole(
-									"default",
-									formatModelSelectorValue(selectorValue, concreteThinking),
-								);
-								if (isAuto) {
-									cfgDefaultThinkingLevel.set(this.ctx.settings, AUTO_THINKING);
-								}
-							} else {
-								const { switched } = await this.ctx.session.setModel(model, role, {
-									selector,
-									thinkingLevel: isAuto ? ThinkingLevel.Inherit : concreteThinking,
-									persist: targetScope === "global",
-								});
-								if (!switched) return false;
-								if (targetScope === "project") {
-									this.ctx.settings.setProjectModelRole(
-										"default",
-										formatModelSelectorValue(selectorValue, concreteThinking),
-									);
-								}
-								if (isAuto) {
-									this.ctx.session.setThinkingLevel(AUTO_THINKING, true);
-								} else if (concreteThinking && concreteThinking !== ThinkingLevel.Inherit) {
-									this.ctx.session.setThinkingLevel(concreteThinking);
-								}
-								this.ctx.statusLine.invalidate();
-								this.ctx.updateEditorBorderColor();
-							}
-							this.ctx.showStatus(`${defaultStatusLabel} model: ${selector ?? model.id}`);
-						} else {
-							// Other roles (smol, slow, custom): update settings, not the current model.
-							const modelRoleValue = formatModelSelectorValue(selectorValue, thinkingLevel);
-							if (targetScope === "project") {
-								this.ctx.settings.setProjectModelRole(role, modelRoleValue);
-							} else {
-								this.ctx.settings.setModelRole(role, modelRoleValue);
-							}
-							const roleInfo = getRoleInfo(role, settings);
-							this.ctx.showStatus(
-								`${scopeLabel}${roleInfo?.tag ?? roleInfo?.name ?? role} model: ${selector ?? model.id}`,
-							);
-						}
-						return true;
-					} catch (error) {
-						this.ctx.showError(error instanceof Error ? error.message : String(error));
-						return false;
-					} finally {
-						releaseDefaultMutation?.();
-						hub?.refreshAfterExternalMutation();
-					}
-				},
+				onAssign: (model, role, thinkingLevel, selector, scope?: ModelRoleSelectionScope) =>
+					this.#assignModelRole(model, role, thinkingLevel, selector, scope, () =>
+						hub?.refreshAfterExternalMutation(),
+					),
 				onUnassign: async (role, scope?: ModelRoleSelectionScope) => {
 					const releaseDefaultMutation = role === "default" ? await this.#acquireDefaultRoleMutation() : undefined;
 					const configuredStorage = cfgModelRoleStorage.get(this.ctx.settings);

@@ -409,9 +409,18 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 			);
 		},
 	},
+	// gk: `/models` opens the Models & providers screen; `/model` keeps the omp behaviour.
+	{
+		name: "models",
+		icon: "model",
+		description: "Models & providers: roster, roles, provider logins",
+		handleTui: async (_command, runtime) => {
+			clearSubmittedText(runtime);
+			await runtime.ctx.showGkModelsScreen();
+		},
+	},
 	{
 		name: "model",
-		aliases: ["models"],
 		icon: "model",
 		description: "Switch model for this session",
 		acpDescription: "Show current model selection",

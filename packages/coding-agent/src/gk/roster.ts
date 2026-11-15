@@ -1,3 +1,6 @@
+import { mkdir, rename } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { getAgentDir } from "@oh-my-pi/pi-utils";
 import type { ModelRegistry } from "../config/model-registry";
 import { type RosterEntry, type RosterOverride, SKILLS, type Size, type Skill, type Tier } from "./types";
 
@@ -121,6 +124,58 @@ export async function loadRosterOverrides(path: string): Promise<RosterOverride[
 		else overrides.push(result);
 	});
 	return overrides;
+}
+
+/** `~/.gk/agent/roster.yml`. */
+export function getRosterPath(): string {
+	return join(getAgentDir(), "roster.yml");
+}
+
+/**
+ * Write `overrides` as the `models:` list of a roster.yml, keeping any other top-level keys.
+ * Throws when the existing file is not a YAML mapping, so a hand-edited file is never clobbered.
+ */
+export async function saveRosterOverrides(path: string, overrides: RosterOverride[]): Promise<void> {
+	const file = Bun.file(path);
+	let doc: Record<string, unknown> = {};
+	if (await file.exists()) {
+		const parsed: unknown = Bun.YAML.parse(await file.text());
+		if (parsed !== null && parsed !== undefined) {
+			if (typeof parsed !== "object" || Array.isArray(parsed)) {
+				throw new Error(`gk roster: ${path} is not a YAML mapping; not overwriting it`);
+			}
+			doc = parsed as Record<string, unknown>;
+		}
+	}
+	doc.models = overrides.map(override => {
+		const out: Record<string, unknown> = { selector: override.selector };
+		if (override.tier !== undefined) out.tier = override.tier;
+		if (override.strengths !== undefined) out.strengths = [...override.strengths];
+		if (override.enabled !== undefined) out.enabled = override.enabled;
+		if (override.maxConcurrent !== undefined) out.maxConcurrent = override.maxConcurrent;
+		return out;
+	});
+	await mkdir(dirname(path), { recursive: true });
+	const tmp = `${path}.${process.pid}.tmp`;
+	await Bun.write(tmp, Bun.YAML.stringify(doc, null, 2));
+	await rename(tmp, path);
+}
+
+/**
+ * Return `overrides` with `patch` merged into `selector`'s entry (one entry per selector).
+ * `enabled: true` is the default, so it is dropped; an entry left with no fields is removed.
+ */
+export function patchRosterOverride(
+	overrides: readonly RosterOverride[],
+	selector: string,
+	patch: Omit<RosterOverride, "selector">,
+): RosterOverride[] {
+	const merged: RosterOverride = { selector };
+	for (const override of overrides) if (override.selector === selector) Object.assign(merged, override);
+	Object.assign(merged, patch);
+	if (merged.enabled === true) delete merged.enabled;
+	const rest = overrides.filter(override => override.selector !== selector);
+	return Object.keys(merged).length > 1 ? [...rest, merged] : rest;
 }
 
 /**
