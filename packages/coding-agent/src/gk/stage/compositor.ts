@@ -2,6 +2,10 @@
  * Stage compositor: a full-screen cell grid that tiles blit their rendered rows into. Cells carry
  * the active SGR state, so colors never bleed between tiles and every output row has exactly
  * `width` columns. Non-SGR escapes (cursor moves, OSC, APC) are dropped.
+ *
+ * SGR is normalized per cell (one slot per attribute), so a row costs one short sequence per style
+ * change however many escapes its source lines carried. A base style (the Stage's `paneBg`) fills
+ * every cell whose own foreground/background is unset, so nothing shows the terminal default.
  */
 import { getSegmenter, replaceTabs, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import type { Rect } from "./layout";
@@ -9,19 +13,118 @@ import type { Rect } from "./layout";
 export interface Cell {
 	/** Grapheme, or `""` for the right half of a wide grapheme. */
 	ch: string;
-	/** Concatenated SGR sequences active for this cell; `""` = default style. */
+	/** Normalized SGR sequence for this cell (base style included); `""` = terminal default. */
 	sgr: string;
 }
 
 const RESET = "\x1b[0m";
 
-function applySgr(active: string, params: string): string {
-	const parts = params.split(";");
-	if (parts[0] === "" || parts[0] === "0") {
-		const rest = parts.slice(1).join(";");
-		return rest ? `\x1b[${rest}m` : "";
+/** One slot per SGR attribute; `""` = unset. */
+interface SgrSlots {
+	bold: boolean;
+	dim: boolean;
+	italic: boolean;
+	underline: string;
+	blink: boolean;
+	inverse: boolean;
+	hidden: boolean;
+	strike: boolean;
+	overline: boolean;
+	fg: string;
+	bg: string;
+	ulColor: string;
+}
+
+function emptySlots(): SgrSlots {
+	return {
+		bold: false,
+		dim: false,
+		italic: false,
+		underline: "",
+		blink: false,
+		inverse: false,
+		hidden: false,
+		strike: false,
+		overline: false,
+		fg: "",
+		bg: "",
+		ulColor: "",
+	};
+}
+
+/** Apply SGR `params` (the text between `ESC[` and `m`) to `s` in place. */
+function applySgr(s: SgrSlots, params: string): void {
+	const parts = params === "" ? ["0"] : params.split(";");
+	for (let i = 0; i < parts.length; i++) {
+		const p = parts[i]!;
+		// Colon forms (`38:2::r:g:b`, `4:3`) are one self-contained token.
+		const colon = p.indexOf(":");
+		const code = Number(colon >= 0 ? p.slice(0, colon) : p || "0");
+		if (code === 38 || code === 48 || code === 58) {
+			let color = p;
+			if (colon < 0) {
+				const mode = parts[i + 1];
+				const n = mode === "5" ? 2 : mode === "2" ? 4 : 0;
+				color = parts.slice(i, i + 1 + n).join(";");
+				i += n;
+			}
+			if (code === 38) s.fg = color;
+			else if (code === 48) s.bg = color;
+			else s.ulColor = color;
+			continue;
+		}
+		if (code === 0) Object.assign(s, emptySlots());
+		else if (code === 1) s.bold = true;
+		else if (code === 2) s.dim = true;
+		else if (code === 3) s.italic = true;
+		else if (code === 4) s.underline = p;
+		else if (code === 5 || code === 6) s.blink = true;
+		else if (code === 7) s.inverse = true;
+		else if (code === 8) s.hidden = true;
+		else if (code === 9) s.strike = true;
+		else if (code === 21) s.underline = "21";
+		else if (code === 22) s.bold = s.dim = false;
+		else if (code === 23) s.italic = false;
+		else if (code === 24) s.underline = "";
+		else if (code === 25) s.blink = false;
+		else if (code === 27) s.inverse = false;
+		else if (code === 28) s.hidden = false;
+		else if (code === 29) s.strike = false;
+		else if (code === 39) s.fg = "";
+		else if (code === 49) s.bg = "";
+		else if (code === 53) s.overline = true;
+		else if (code === 55) s.overline = false;
+		else if (code === 59) s.ulColor = "";
+		else if ((code >= 30 && code <= 37) || (code >= 90 && code <= 97)) s.fg = p;
+		else if ((code >= 40 && code <= 47) || (code >= 100 && code <= 107)) s.bg = p;
 	}
-	return `${active}\x1b[${params}m`;
+}
+
+/** One SGR sequence for `s`, unset colors falling back to `base`; `""` when nothing is set. */
+function serializeSgr(s: SgrSlots, base: SgrSlots | undefined): string {
+	const out: string[] = [];
+	if (s.bold) out.push("1");
+	if (s.dim) out.push("2");
+	if (s.italic) out.push("3");
+	if (s.underline) out.push(s.underline);
+	if (s.blink) out.push("5");
+	if (s.inverse) out.push("7");
+	if (s.hidden) out.push("8");
+	if (s.strike) out.push("9");
+	if (s.overline) out.push("53");
+	const fg = s.fg || base?.fg || "";
+	const bg = s.bg || base?.bg || "";
+	if (fg) out.push(fg);
+	if (bg) out.push(bg);
+	if (s.ulColor) out.push(s.ulColor);
+	return out.length > 0 ? `\x1b[${out.join(";")}m` : "";
+}
+
+/** Parse a run of SGR sequences (e.g. a theme color opener) into slots. */
+function parseSgrRun(seq: string): SgrSlots {
+	const s = emptySlots();
+	for (const m of seq.matchAll(/\x1b\[([0-9;:]*)m/g)) applySgr(s, m[1]!);
+	return s;
 }
 
 /** Index just past the escape sequence starting at `i` (which holds ESC). */
@@ -53,12 +156,18 @@ export class CellBuffer {
 	readonly height: number;
 	readonly #ch: string[];
 	readonly #sgr: string[];
+	readonly #base: SgrSlots | undefined;
+	/** Serialized default style (the base alone). */
+	readonly #blank: string;
 
-	constructor(width: number, height: number) {
+	/** `base`: SGR (e.g. a background color opener) every cell falls back to for unset fg/bg. */
+	constructor(width: number, height: number, base = "") {
 		this.width = Math.max(0, Math.floor(width));
 		this.height = Math.max(0, Math.floor(height));
+		this.#base = base ? parseSgrRun(base) : undefined;
+		this.#blank = serializeSgr(emptySlots(), this.#base);
 		this.#ch = new Array<string>(this.width * this.height).fill(" ");
-		this.#sgr = new Array<string>(this.width * this.height).fill("");
+		this.#sgr = new Array<string>(this.width * this.height).fill(this.#blank);
 	}
 
 	cell(x: number, y: number): Cell | undefined {
@@ -67,21 +176,22 @@ export class CellBuffer {
 		return { ch: this.#ch[i], sgr: this.#sgr[i] };
 	}
 
-	/** Fill a rect with one narrow character. */
+	/** Fill a rect with one narrow character; `sgr` is raw SGR (normalized against the base). */
 	fill(rect: Rect, ch = " ", sgr = ""): void {
+		const style = sgr ? serializeSgr(parseSgrRun(sgr), this.#base) : this.#blank;
 		for (let y = rect.y; y < rect.y + rect.h; y++) {
-			for (let x = rect.x; x < rect.x + rect.w; x++) this.#put(x, y, ch, sgr, 1);
+			for (let x = rect.x; x < rect.x + rect.w; x++) this.#put(x, y, ch, style, 1);
 		}
 	}
 
 	clear(): void {
 		this.#ch.fill(" ");
-		this.#sgr.fill("");
+		this.#sgr.fill(this.#blank);
 	}
 
 	/**
 	 * Write `lines[i]` into row `rect.y + i`, clipped to `rect` and the buffer. Each row of the rect is
-	 * fully painted: short lines are padded with default-style blanks, a wide grapheme that would
+	 * fully painted: short lines are padded with base-style blanks, a wide grapheme that would
 	 * cross the right edge becomes a blank, and missing lines blank their row.
 	 */
 	blit(lines: readonly string[], rect: Rect): void {
@@ -92,13 +202,16 @@ export class CellBuffer {
 			if (y < 0 || y >= this.height) continue;
 			const line = replaceTabs(lines[r] ?? "");
 			let col = rect.x;
-			let active = "";
+			const slots = emptySlots();
+			let active = this.#blank;
 			let i = 0;
 			outer: while (i < line.length && col < right) {
 				if (line.charCodeAt(i) === 0x1b) {
 					const end = escapeEnd(line, i);
-					const seq = line.slice(i, end);
-					if (seq.startsWith("\x1b[") && seq.endsWith("m")) active = applySgr(active, seq.slice(2, -1));
+					if (line[i + 1] === "[" && line[end - 1] === "m") {
+						applySgr(slots, line.slice(i + 2, end - 1));
+						active = serializeSgr(slots, this.#base);
+					}
 					i = end;
 					continue;
 				}
@@ -111,12 +224,12 @@ export class CellBuffer {
 					if (gw <= 0) continue;
 					if (col + gw > right) break outer;
 					if (col >= 0) this.#put(col, y, segment, active, gw);
-					else if (col + gw > 0) this.#put(0, y, " ", "", 1);
+					else if (col + gw > 0) this.#put(0, y, " ", this.#blank, 1);
 					col += gw;
 				}
 				i = runEnd;
 			}
-			for (; col < right; col++) if (col >= 0) this.#put(col, y, " ", "", 1);
+			for (; col < right; col++) if (col >= 0) this.#put(col, y, " ", this.#blank, 1);
 		}
 	}
 

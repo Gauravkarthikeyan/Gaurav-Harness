@@ -40,6 +40,35 @@ describe("CellBuffer", () => {
 		buf.blit(["\x1b]8;;http://x\x07ab\x1b]8;;\x07\x1b[2Kc\x1b[0;32md"], { x: 0, y: 0, w: 6, h: 1 });
 		expect(buf.toLines()[0]).toBe(`abc\x1b[32md${RESET}  `);
 	});
+
+	it("normalizes SGR per cell so long styled rows stay short", () => {
+		const buf = new CellBuffer(200, 1);
+		// 200 cells, each toggling colors: the source carries 400 escapes.
+		const line = Array.from({ length: 200 }, (_, i) => `\x1b[38;2;${i};0;0m\x1b[48;5;${i % 2}m█\x1b[49m`).join("");
+		buf.blit([line], { x: 0, y: 0, w: 200, h: 1 });
+		expect(buf.cell(5, 0)?.sgr).toBe("\x1b[38;2;5;0;0;48;5;1m");
+		const [out] = buf.toLines();
+		expect(visibleWidth(out)).toBe(200);
+		expect(out.length).toBeLessThan(200 * 32);
+	});
+
+	it("resets attributes slot by slot", () => {
+		const buf = new CellBuffer(4, 1);
+		buf.blit(["\x1b[1;2;31ma\x1b[22mb\x1b[39;4mc\x1b[24md"], { x: 0, y: 0, w: 4, h: 1 });
+		expect([0, 1, 2, 3].map(x => buf.cell(x, 0)?.sgr)).toEqual(["\x1b[1;2;31m", "\x1b[31m", "\x1b[4m", ""]);
+	});
+
+	it("paints unset backgrounds and blanks with the base style", () => {
+		const BASE = "\x1b[48;2;0;0;0m";
+		const buf = new CellBuffer(6, 2, BASE);
+		buf.blit([`${RED}ab\x1b[49m\x1b[44mc\x1b[49md`], { x: 0, y: 0, w: 4, h: 1 });
+		expect(buf.cell(0, 0)?.sgr).toBe("\x1b[31;48;2;0;0;0m");
+		expect(buf.cell(2, 0)?.sgr).toBe("\x1b[31;44m");
+		expect(buf.cell(3, 0)?.sgr).toBe("\x1b[31;48;2;0;0;0m");
+		expect(buf.cell(5, 0)?.sgr).toBe(BASE);
+		expect(buf.cell(0, 1)?.sgr).toBe(BASE);
+		expect(buf.toLines()[1]).toBe(`${BASE}      ${RESET}`);
+	});
 });
 
 describe("drawFrame", () => {
