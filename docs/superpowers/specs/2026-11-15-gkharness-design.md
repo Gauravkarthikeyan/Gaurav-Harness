@@ -140,28 +140,17 @@ their parent's area.
 - **Motion rule: motion means work.** Animation is allowed only while it reflects live state (Core while the brain
   works, tile reflow when attention shifts, a running spinner, the one-shot error glitch, the finale). Nothing moves
   while idle. `tui.motion: off`, non-TTY, `--quiet` and resume make every effect static (final frame immediately).
-- **Splash** (≤ 2.5 s of motion, any key skips): block-letter **GK HARNESS** revealed row by row (600 ms), one gold
-  shimmer sweep (800 ms), tagline "Gaurav's Harness", footer "by Gaurav Karthikeyan · github.com/Gauravkarthikeyan";
-  mode cards fade in under the logo. After the choice (or immediately when the mode is preset): the **Core ignites**
-  at center (`·` → `•` → `●` → `◉` with a one-ring gold burst, 500 ms), then the logo lifts away while the Core
-  glides to its header slot and the Stage's tile frames draw in (400 ms) — a continuous move, not a cut.
-- Mode picker: two cards, ←/→ + Enter, `s`/`o` hotkeys, remembers last choice. `--solo` / `--orchestra` skip it;
-  setting `gk.launchMode: ask|solo|orchestra` (default `ask`).
-
-```
-            ██████  ██   ██     ██   ██  █████  ██████  ███    ██ ███████ ███████ ███████
-           ██       ██  ██      ██   ██ ██   ██ ██   ██ ████   ██ ██      ██      ██
-           ██   ███ █████       ███████ ███████ ██████  ██ ██  ██ █████   ███████ ███████
-           ██    ██ ██  ██      ██   ██ ██   ██ ██   ██ ██  ██ ██ ██           ██      ██
-            ██████  ██   ██     ██   ██ ██   ██ ██   ██ ██   ████ ███████ ███████ ███████
-                                       ✦  Gaurav's Harness  ✦
-          ╭──────────── Solo ────────────╮   ╭────────── Orchestra ──────────╮
-          │ One brain, full toolbox.     │   │ A conductor plans, a cheaper  │
-          │ Classic omp-style session.   │   │ crew builds. Watch them work. │
-          ╰──────────────────────────────╯   ╰───────────────────────────────╯
-                                                 ◉
-                     by Gaurav Karthikeyan · github.com/Gauravkarthikeyan
-```
+- **Splash** (≤ 2.5 s, any key skips; superseded in detail by visual v2 §5.1): a rotating dot globe with an orbit
+  ring, the pixel wordmark "GAURAV'S HARNESS" with the `</>` badge, a live startup checklist (providers, roster,
+  skills, MCP n/m, computer use) that ticks as the real checks finish, a thin progress bar, and the footer
+  "by Gaurav Karthikeyan · github.com/Gauravkarthikeyan" · "gk-code 0.1.0 · any key to skip". No tagline.
+  After the choice (or immediately when the mode is preset): the **Core ignites** at center (`·` → `•` → `●` → `◉`
+  with a one-ring gold burst, 500 ms), then the Core glides to its header slot and the Stage's tile frames draw in
+  (400 ms) — a continuous move, not a cut. (Core/Stage transition: not built yet.)
+- Mode picker (visual v2 §5.2): two cards with one factual sentence and live facts each (Solo: default model,
+  skills/MCP, cwd; Orchestra: conductor model, roster count), the focused card framed in gold; ←/→ + Enter, `s`/`o`
+  hotkeys, remembers the last choice (`gk.lastLaunchMode`). `--solo` / `--orchestra` skip it; setting
+  `gk.launchMode: ask|solo|orchestra` (default `ask`). Wireframes: visual v2 §5.
 
 ### 5.3 Solo mode
 omp's agent behavior unchanged (same tools, same prompts plus the small persona block in §5.6), with:

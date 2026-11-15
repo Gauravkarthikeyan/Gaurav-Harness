@@ -54,13 +54,13 @@ omp config reset steeringMode   # remove a key from config.yml so its default ap
 omp config path                 # print the active agent directory
 ```
 
-For users who want the full first-run animation on normal launches, set `startup.showSplash`:
+The GK splash (startup checks, about 2 s, any key skips) plays on every normal interactive launch. Turn it off with `startup.showSplash`:
 
 ```bash
-omp config set startup.showSplash true
+gk config set startup.showSplash false
 ```
 
-This only controls the startup splash animation. It does not rerun setup or change setup state, and `startup.quiet: true` still suppresses all startup chrome including the splash.
+It does not rerun setup or change setup state, and `startup.quiet: true` still suppresses all startup chrome including the splash. After the splash, `gk.launchMode` (`ask` by default) shows the Solo / Orchestra mode picker; set it to `solo` or `orchestra` to skip the picker, or pass `--solo` / `--orchestra` for one launch.
 
 ### Subcommands
 
@@ -995,7 +995,8 @@ The `cache` segment (in the `full` and `nerd` presets) shows before you send whe
 | `input.bareSlashCommands`      | boolean | `false`         | Run an exact command name without `/`; after session messages exist, Enter must be pressed twice to confirm.                                                                                                                                                |
 | `tui.vimMode`                  | boolean | `false`         | Enable modal prompt editing; `tui.vimModeDisplay` selects `text`, `icon`, or `none` (default `text`).                                                                                                                                                       |
 | `startup.quiet`                | boolean | `false`         | Suppress welcome/startup chrome, including the splash.                                                                                                                                                                                                      |
-| `startup.showSplash`           | boolean | `false`         | Show the full setup animation on ordinary interactive startup without rerunning setup.                                                                                                                                                                      |
+| `startup.showSplash`           | boolean | `true`          | Show the GK splash (startup checks, any key skips) on ordinary interactive startup.                                                                                                                                                                         |
+| `gk.launchMode`                | enum    | `ask`           | `ask`, `solo`, `orchestra`: `ask` shows the mode picker (preselecting `gk.lastLaunchMode`); `--solo` / `--orchestra` override it.                                                                                                                           |
 | `startup.changelogMode`        | enum    | `summary`       | `summary`, `expanded`, `hidden`: choose startup release-note presentation.                                                                                                                                                                                  |
 | `startup.setupWizard`          | boolean | `true`          | Show newly added onboarding steps once per setup version.                                                                                                                                                                                                   |
 | `update.auto`                  | boolean | `false`         | Install a newer release in the background on interactive startup, through whatever owns the install (standalone binary, Homebrew, mise, bun, npm); progress shows after the welcome banner's version and the next launch runs the new build. Ignored under Tern, Nix, and source checkouts. Status and worker log: `~/.omp/update/`. |
