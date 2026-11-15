@@ -22,5 +22,5 @@ it("prints the OMP license with the CLI and native addon notices on the exact to
 	expect(exitCode).toBe(0);
 	expect(stderr).toBe("");
 	const sections = [license, ...notices].map(text => text.trimEnd());
-	expect(stdout).toBe(`OMP License and Third-Party Notices\n\n${sections.join("\n\n")}\n`);
+	expect(stdout).toBe(`GK Code License and Third-Party Notices\n\n${sections.join("\n\n")}\n`);
 });

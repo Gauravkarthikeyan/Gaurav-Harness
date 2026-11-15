@@ -2608,7 +2608,7 @@ export class SessionManager {
 			const release = this.#storage.claimSession?.(id, file);
 			if (release === null) {
 				throw new SessionMoveRefusedError(
-					`Cannot move session to "${file}": another live omp process writes the session there. Nothing was moved.`,
+					`Cannot move session to "${file}": another live GK Code process writes the session there. Nothing was moved.`, // gk: debrand
 				);
 			}
 			destination?.release();
@@ -2632,7 +2632,7 @@ export class SessionManager {
 			this.#claimSession();
 			if (this.#sessionClaim?.release === undefined) {
 				throw new SessionMoveRefusedError(
-					`Cannot move session "${this.#sessionFile}": another live omp process writes it. Nothing was moved.`,
+					`Cannot move session "${this.#sessionFile}": another live GK Code process writes it. Nothing was moved.`, // gk: debrand
 				);
 			}
 			if (expectedSessionFile && path.resolve(this.#sessionFile) !== path.resolve(expectedSessionFile)) {

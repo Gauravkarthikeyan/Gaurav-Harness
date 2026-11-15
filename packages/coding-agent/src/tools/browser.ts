@@ -124,7 +124,7 @@ const browserSchema = type({
 	"name?": type("string").describe("tab id (default 'main')"),
 	"url?": type("string").describe("url to open"),
 	"app?": type("string").describe(
-		"browser to drive: 'relay' (the user's Chrome), 'tern' (Tern picture-in-picture), 'webkit', 'chromium' (managed), 'own' (omp's own browser: WebKit if installed, else Chromium), 'auto' (default choice without the relay), a CDP endpoint URL to attach to, or an executable path to spawn",
+		"browser to drive: 'relay' (the user's Chrome), 'tern' (Tern picture-in-picture), 'webkit', 'chromium' (managed), 'own' (GK Code's own browser: WebKit if installed, else Chromium), 'auto' (default choice without the relay), a CDP endpoint URL to attach to, or an executable path to spawn", // gk: debrand
 	),
 	"argv?": type("string[]").describe("extra cli args when app is an executable path"),
 	"target?": type("string").describe(
@@ -153,7 +153,7 @@ const browserSchema = type({
 	"all?": type("boolean").describe("release every managed tab this agent opened"),
 	"kill?": type("boolean").describe("also kill spawned-app browsers"),
 	"persist?": type("boolean").describe(
-		"keep tab live across turn settle and idle close; on a relay tab omp opened, keep it open after the session ends",
+		"keep tab live across turn settle and idle close; on a relay tab GK Code opened, keep it open after the session ends", // gk: debrand
 	),
 });
 
@@ -223,7 +223,7 @@ export function resolveBrowserKind(
 		);
 		if (!webkitKind) {
 			throw new ToolError(
-				`app: "webkit" requires omp's WebKit engine, and none is installed: its host executable must be ${getWebKitHostPath()}, or be named by PI_BROWSER_WEBKIT_PATH or the browser.webkitPath setting, with PI_BROWSER_WEBKIT not set to 0.`,
+				`app: "webkit" requires GK Code's WebKit engine, and none is installed: its host executable must be ${getWebKitHostPath()}, or be named by PI_BROWSER_WEBKIT_PATH or the browser.webkitPath setting, with PI_BROWSER_WEBKIT not set to 0.`, // gk: debrand
 			);
 		}
 		return webkitKind;
@@ -498,11 +498,11 @@ async function openBrowser(
 	const failures: Array<{ backend: "tern" | "webkit"; reason: string }> =
 		webkitDownloadFailure === undefined ? [] : [{ backend: "webkit", reason: webkitDownloadFailure }];
 	for (;;) {
-		const opened = kind.kind === "webkit" ? "omp's WebKit browser" : "Chromium";
+		const opened = kind.kind === "webkit" ? "GK Code's WebKit browser" : "Chromium"; // gk: debrand
 		const notes = failures.map(failure =>
 			failure.backend === "tern"
 				? `Tern cannot show a browser here (${failure.reason}); opened ${opened} instead. Pass app: "own" to skip Tern, or app: "tern" to require it.`
-				: `omp's WebKit browser could not start (${failure.reason}); opened Chromium instead. Pass app: "chromium" to skip it, or app: "webkit" to require it.`,
+				: `GK Code's WebKit browser could not start (${failure.reason}); opened Chromium instead. Pass app: "chromium" to skip it, or app: "webkit" to require it.`, // gk: debrand
 		);
 		const remainingMs = Math.max(1, timeoutMs - (performance.now() - startedAt));
 		try {
@@ -593,7 +593,7 @@ async function installWebKitForOpen(
 		if (signal?.aborted) throw error;
 		const cause = error instanceof Error ? error.message : String(error);
 		if (explicit)
-			throw new ToolError(`app: "webkit" requires omp's WebKit engine, which could not be downloaded: ${cause}`);
+			throw new ToolError(`app: "webkit" requires GK Code's WebKit engine, which could not be downloaded: ${cause}`); // gk: debrand
 		return `its engine could not be downloaded: ${cause}`;
 	}
 }
@@ -621,13 +621,13 @@ async function openOnKind(
 	// Chrome's extension debugger API exposes no Security domain, so the relay cannot honor the override.
 	if (params.insecure && kind.kind === "relay") {
 		throw new ToolError(
-			'insecure is not supported through the Chrome relay: the extension debugger API does not expose the CDP Security domain. Pass app: "chromium" to use omp\'s Chromium instead.',
+			'insecure is not supported through the Chrome relay: the extension debugger API does not expose the CDP Security domain. Pass app: "chromium" to use GK Code\'s Chromium instead.', // gk: debrand
 		);
 	}
 	// Chrome never lets an extension choose where downloads go. Refused here, before an existing tab is closed to reopen.
 	if (params.downloads !== undefined && kind.kind === "relay") {
 		throw new ToolError(
-			"The omp browser relay cannot choose where Chrome saves downloads: open the tab without `downloads`, and tab.waitForDownload() and tab.downloads() report where Chrome saved each file.",
+			"The GK Code browser relay cannot choose where Chrome saves downloads: open the tab without `downloads`, and tab.waitForDownload() and tab.downloads() report where Chrome saved each file.", // gk: debrand
 		);
 	}
 
@@ -790,7 +790,7 @@ async function listTargets(
 	const kind = resolveBrowserKind({ ...params, target: params.target ?? "" }, session);
 	if (kind.kind !== "tern" && kind.kind !== "relay") {
 		throw new ToolError(
-			`No pages to adopt here (the browser would be ${describeKind(kind)}): targets exist only inside a Tern pane (its browser blocks) or with the omp relay (app: "relay" or the browser.relay setting).`,
+			`No pages to adopt here (the browser would be ${describeKind(kind)}): targets exist only inside a Tern pane (its browser blocks) or with the GK Code relay (app: "relay" or the browser.relay setting).`, // gk: debrand
 		);
 	}
 	details.browser = kind.kind;
@@ -930,8 +930,8 @@ function describeBrowser(tab: TabSession): string {
 	}
 	if (tab.backend === "webkit") {
 		return tab.browser.webkit.isShown(tab.ternTab.block)
-			? "omp's WebKit browser (in a window)"
-			: "omp's headless WebKit browser";
+			? "GK Code's WebKit browser (in a window)" // gk: debrand
+			: "GK Code's headless WebKit browser";
 	}
 	const handle = tab.browser;
 	if (!("browser" in handle)) {
@@ -962,7 +962,7 @@ function ternNotes(tab: TernTabSession): string[] {
 		notes.push(
 			adopted
 				? `Not on screen: the user is viewing another Tern tab or session. Block ${adopted.block} shows once they switch to the tab holding it; tell them where it is.`
-				: `Not on screen: the user hid pictures in picture (⌃⌥⌘P), or this Tern shows them only in the tab holding this omp pane (block ${tab.browser.kind.pane}); tell them where it is.`,
+				: `Not on screen: the user hid pictures in picture (⌃⌥⌘P), or this Tern shows them only in the tab holding this GK Code pane (block ${tab.browser.kind.pane}); tell them where it is.`, // gk: debrand
 		);
 	}
 	return notes;
@@ -983,6 +983,6 @@ function describeKind(kind: BrowserKind): string {
 		case "tern":
 			return `tern:pane ${kind.pane}`;
 		case "webkit":
-			return "omp's headless WebKit";
+			return "GK Code's headless WebKit"; // gk: debrand
 	}
 }

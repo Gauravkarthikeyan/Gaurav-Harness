@@ -104,7 +104,7 @@ export async function loadSkillshareSkills(ctx: LoadContext): Promise<LoadResult
 registerProvider<Skill>(skillCapability.id, {
 	id: SKILLSHARE_PROVIDER_ID,
 	displayName: "Skillshare",
-	description: "Registry skills installed with `omp skill install` (skills.lock.json)",
+	description: "Registry skills installed with `gk skill install` (skills.lock.json)", // gk: debrand
 	priority: PRIORITY,
 	load: loadSkillshareSkills,
 });

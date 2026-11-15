@@ -54,8 +54,9 @@ export const cfgIdaMaxOpen = register({
 		tab: "tools",
 		group: "IDA Pro",
 		label: "IDA Max Open Databases",
+		// gk: debrand
 		description:
-			"Most IDA databases (omp.ida.* daemons in omp ps) open at once per project; opening another saves and closes the least recently used idle one",
+			"Most IDA databases (omp.ida.* daemons in gk ps) open at once per project; opening another saves and closes the least recently used idle one",
 		options: [
 			{ value: "2", label: "2" },
 			{ value: "4", label: "4" },

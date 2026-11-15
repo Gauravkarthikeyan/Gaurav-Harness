@@ -280,7 +280,7 @@ export function ovnfsWorkspace(command: string): OpenWorkspace {
 						error: message,
 					});
 					throw new Error(
-						`ovnfs isolation failed: could not release the previous checkout (${message}); its record was kept for \`omp worktree clear\` (set isolation.backend to a native backend to bypass ovnfs)`,
+						`ovnfs isolation failed: could not release the previous checkout (${message}); its record was kept for \`gk worktree clear\` (set isolation.backend to a native backend to bypass ovnfs)`, // gk: debrand
 					);
 				}
 				logger.warn("moved a stale ovnfs checkout record aside after removal failed", {

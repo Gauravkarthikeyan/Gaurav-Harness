@@ -5655,7 +5655,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 					for (const extensionPath of unloaded) announcedUnloadedExtensions.add(extensionPath);
 					session.emitNotice(
 						"warning",
-						`Restart omp to load newly enabled extensions: ${unloaded.join(", ")}`,
+						`Restart GK Code to load newly enabled extensions: ${unloaded.join(", ")}`, // gk: debrand
 						"extensions",
 					);
 				}

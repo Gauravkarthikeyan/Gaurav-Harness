@@ -749,7 +749,7 @@ let bundledModuleLoadersPromise: Promise<BundledModuleLoaders> | null = null;
 /** Load the build-supplied registry without evaluating unrelated host modules. */
 function ensureBundledModuleLoadersLoaded(): Promise<BundledModuleLoaders> {
 	if (!USE_BUNDLED_PI_MODULES) {
-		return Promise.reject(new Error("omp:legacy-pi-shim: bundled modules are only available in bundled mode"));
+		return Promise.reject(new Error("legacy-pi-shim: bundled modules are only available in bundled mode")); // gk: debrand
 	}
 	if (!bundledModuleLoadersPromise) {
 		// This virtual module exists only in compiled/npm builds; source mode cannot import it statically.
@@ -764,7 +764,7 @@ async function loadBundledModule(moduleKey: string): Promise<BundledModule> {
 	const loaders = await ensureBundledModuleLoadersLoaded();
 	const loader = loaders[moduleKey];
 	if (!loader) {
-		throw new Error(`omp:legacy-pi-shim: no bundled module registered for ${moduleKey}`);
+		throw new Error(`legacy-pi-shim: no bundled module registered for ${moduleKey}`); // gk: debrand
 	}
 	const module = await loader();
 	loadedBundledModules[moduleKey] = module;
@@ -795,7 +795,7 @@ function resolveBundledVirtualSpecifier(
 	const scheme = `${namespace}:`;
 	const registryKey = specifier.startsWith(scheme) ? specifier.slice(scheme.length) : specifier;
 	if (!registryKey) {
-		throw new Error("omp:legacy-pi-shim: bundled virtual specifier has no registry key");
+		throw new Error("legacy-pi-shim: bundled virtual specifier has no registry key"); // gk: debrand
 	}
 	return { path: registryKey, namespace };
 }

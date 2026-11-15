@@ -1494,7 +1494,7 @@ async function loadClaudePluginRoots({
 				}
 			}
 		} else {
-			warnings.push(`Failed to parse OMP plugin registry: ${ompRegistryPath}`);
+			warnings.push(`Failed to parse plugin registry: ${ompRegistryPath}`); // gk: debrand
 		}
 	}
 

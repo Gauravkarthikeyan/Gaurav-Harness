@@ -960,7 +960,7 @@ async function replayFilteredAgentCommits(opts: FilteredAgentReplayOptions): Pro
 
 /**
  * Capture task-only changes from the isolation worktree onto a parent-repo
- * branch named `omp/task/${taskId}`. Only root-repo changes go on the branch;
+ * branch named `gk/task/${taskId}`. Only root-repo changes go on the branch;
  * nested-repo patches are returned separately because the parent git can't
  * track files inside gitlinks.
  *
@@ -1002,7 +1002,7 @@ export async function commitToBranch(
 
 	const repoRoot = baseline.root.repoRoot;
 	const repo = vcs.requireGit(repoRoot);
-	const branchName = `omp/task/${taskId}`;
+	const branchName = `gk/task/${taskId}`; // gk: debrand
 	const fallbackMessage = description || taskId;
 
 	let tip: string;

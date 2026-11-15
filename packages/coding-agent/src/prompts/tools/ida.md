@@ -1,7 +1,7 @@
 IDA Pro (idalib) databases: lifecycle, structured edits, and Python `exec` inside the database.
 
 <instruction>
-- Each open DB runs as an `omp.ida.<id>` daemon in the project's `omp ps`, shared by every agent, subagent, and omp process in the project.
+- Each open DB runs as an `omp.ida.<id>` daemon in the project's `gk ps`, shared by every agent, subagent, and GK Code process in the project.
 - DBs survive compaction. `list` shows them.
 - At most `ida.maxOpen` (default 4) stay open:
   - opening another saves and closes the least recently used idle DB
@@ -10,7 +10,7 @@ IDA Pro (idalib) databases: lifecycle, structured edits, and Python `exec` insid
 - `db` accepts a binary or `.i64`/`.idb` path (`<bin>:@<arch>` for a universal Mach-O slice), an open db id, or its daemon name.
 - `db` MAY be omitted when exactly one DB is open.
 - `read <binary>` opens or creates the DB and shows the overview; `open` does the same without a view.
-- Executables get a store IDB under `~/.omp/agent/idbs/<sha16>-<name>/` (the binary itself is never modified); `.i64`/`.idb` files open in place.
+- Executables get a store IDB under `~/.gk/agent/idbs/<sha16>-<name>/` (the binary itself is never modified); `.i64`/`.idb` files open in place.
 - Look with `read` views: `<bin>:<func|0xaddr>` pseudocode, `:<func>:asm`, `:imports`, `:exports`, `:strings`, `:xrefs:<func|0xaddr>`.
 - Change with `ida` (`rename`, `comment`, `set_type`, `make_function`) or `exec`.
 - `target` is a symbol name or `0x` address; `_`-prefixed Mach-O names resolve without the underscore.
@@ -37,5 +37,5 @@ ida(action: "exec", code: "[(hex(ea), n) for ea, n in functions('crypt|aes')]")
 
 <critical>
 - Dirty DBs autosave ~10 s after the worker goes idle; `save` forces it.
-- A killed worker (timeout that ignores SIGINT, crash, `omp ps kill`) loses only changes made since the last save.
+- A killed worker (timeout that ignores SIGINT, crash, `gk ps kill`) loses only changes made since the last save.
 </critical>

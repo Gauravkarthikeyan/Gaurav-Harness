@@ -48,7 +48,7 @@ async function start(command: string): Promise<Daemon> {
 	const status: unknown = JSON.parse(stdout);
 	const version = isRecord(status) ? status.version : undefined;
 	if (!isRecord(status) || version !== PROTOCOL_VERSION || typeof status.socket !== "string") {
-		throw new Error(`${command} speaks admin protocol ${version}; omp needs ${PROTOCOL_VERSION}: update ovnfs`);
+		throw new Error(`${command} speaks admin protocol ${version}; GK Code needs ${PROTOCOL_VERSION}: update ovnfs`); // gk: debrand
 	}
 	return { socket: status.socket };
 }

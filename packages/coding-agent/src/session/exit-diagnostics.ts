@@ -99,7 +99,9 @@ function readSessionExit(entry: SessionEntry): SessionExitData | undefined {
 }
 
 /** Why an interrupted-turn abort record ends a turn its process never finished. */
-export const INTERRUPTED_TURN_ERROR = "Previous OMP process exited before completing the turn.";
+export const INTERRUPTED_TURN_ERROR = "Previous GK Code process exited before completing the turn."; // gk: debrand
+/** The same record as written by omp and pre-rebrand builds; still recognized in persisted sessions. */
+const LEGACY_INTERRUPTED_TURN_ERROR = "Previous OMP process exited before completing the turn."; // gk: debrand
 
 /** How exit recovery reads a branch whose last process may have died without recording its exit. */
 export interface InterruptedTurnOptions {
@@ -177,7 +179,7 @@ export function isInterruptedTurnAbort(message: AgentMessage): boolean {
 	return (
 		message.role === "assistant" &&
 		message.stopReason === "aborted" &&
-		message.errorMessage === INTERRUPTED_TURN_ERROR
+		(message.errorMessage === INTERRUPTED_TURN_ERROR || message.errorMessage === LEGACY_INTERRUPTED_TURN_ERROR) // gk: debrand
 	);
 }
 
@@ -288,7 +290,7 @@ export function createInterruptedToolResults(
 					text:
 						context === "fork"
 							? "The parent session may still be running this tool; its outcome is unknown."
-							: "Previous OMP process exited before this tool returned; its outcome is unknown.",
+							: "Previous GK Code process exited before this tool returned; its outcome is unknown.", // gk: debrand
 				},
 			],
 			isError: true,
@@ -438,5 +440,5 @@ export function describePendingToolCalls(entries: readonly SessionEntry[]): stri
 	if (pending.length === 0) return undefined;
 	const formatted = pending.map(formatPendingToolCall).join(", ");
 	const noun = pending.length === 1 ? "tool call" : "tool calls";
-	return `Previous session ended while ${pending.length} ${noun} remained pending: ${formatted}. The prior OMP process exited before recording tool result(s).`;
+	return `Previous session ended while ${pending.length} ${noun} remained pending: ${formatted}. The prior GK Code process exited before recording tool result(s).`; // gk: debrand
 }
