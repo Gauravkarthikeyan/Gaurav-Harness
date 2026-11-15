@@ -217,6 +217,7 @@ import titleCardPrompt from "../prompts/system/title-card.md" with { type: "text
 import titleForkPrompt from "../prompts/system/title-fork.md" with { type: "text" };
 import skillfulNoticePrompt from "../prompts/system/skillful-notice.md" with { type: "text" };
 import vibeModeActivePrompt from "../prompts/system/vibe-mode-active.md" with { type: "text" };
+import gkConductorPrompt from "../prompts/gk/conductor.md" with { type: "text" }; // gk: Orchestra conductor
 import {
 	deobfuscateAssistantContent,
 	deobfuscateSessionContext,
@@ -296,6 +297,8 @@ import {
 import { generateSessionTitle, nerdGlyphsActive } from "../utils/title-generator";
 import { buildNamedToolChoice, isToolChoiceActive } from "../utils/tool-choice";
 import type { VibeModeState } from "../vibe/state";
+import type { CrewWorkerSpawner } from "../gk/crew-runtime"; // gk: Orchestra crew
+import { GK_ORCHESTRA_CONTEXT_MESSAGE_TYPE } from "../gk/orchestra-context"; // gk: Orchestra conductor
 import type { AgentSessionEvent, AgentSessionEventListener } from "./agent-session-events";
 import { type AgentViewSession, isLocalAgentSession } from "./agent-session-handle";
 import {
@@ -1139,6 +1142,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	#experimentalContextNotesReminder: { prompt: string; generation: number } | undefined;
 	#planModeState: PlanModeState | undefined;
 	#vibeModeState: VibeModeState | undefined;
+	#orchestraModeEnabled = false; // gk: Orchestra conductor
+	#createCrewSpawner: (() => CrewWorkerSpawner) | undefined; // gk: Orchestra crew
 	#goalModeState: GoalModeState | undefined;
 	#goalRuntime: GoalRuntime;
 	readonly #advisors: SessionAdvisors;
@@ -2168,6 +2173,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
+		this.#createCrewSpawner = config.createCrewSpawner; // gk: Orchestra crew
 		this.tokenRate = new TokenRateMeter(text => this.agent.tokenizer.countTokens(text));
 		this.#reseedTokenRate();
 		this.agent.setQueuedMessageGrouping(
@@ -4480,7 +4486,11 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		if (message.role === "hookMessage" || message.role === "custom") {
 			// One-run instructions must not return from persisted history: prewalk
 			// nudges are consumed once, and Vibe context is rebuilt only while active.
-			if (!isPrewalkPlanNudge(message) && message.customType !== VIBE_MODE_CONTEXT_MESSAGE_TYPE) {
+			if (
+				!isPrewalkPlanNudge(message) &&
+				message.customType !== VIBE_MODE_CONTEXT_MESSAGE_TYPE &&
+				message.customType !== GK_ORCHESTRA_CONTEXT_MESSAGE_TYPE // gk: rebuilt per prompt like Vibe's
+			) {
 				this.sessionManager.appendCustomMessageEntry(
 					message.customType,
 					message.content,
@@ -7619,6 +7629,16 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		return this.#tools.removeVibeToolsPreservingActive();
 	}
 
+	/** gk: installs Orchestra's crew tools; the active set becomes `baseToolNames` plus them. */
+	activateCrewTools(tools: AgentTool[], baseToolNames: string[]): Promise<void> {
+		return this.#tools.activateCrewTools(tools, baseToolNames);
+	}
+
+	/** gk: uninstalls the crew tools and activates the replacement set. */
+	deactivateCrewTools(nextToolNames: string[]): Promise<void> {
+		return this.#tools.deactivateCrewTools(nextToolNames);
+	}
+
 	#resolveActiveEditMode(): EditModeSetting {
 		return this.#tools.resolveActiveEditMode();
 	}
@@ -8186,26 +8206,45 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	setVibeModeState(state: VibeModeState | undefined): void {
 		this.#vibeModeState = state;
 		if (state?.enabled) return;
+		this.#dropModeContext(VIBE_MODE_CONTEXT_MESSAGE_TYPE, "vibe-mode-exit");
+	}
 
-		const isVibeContext = (message: AgentMessage): boolean =>
-			message.role === "custom" && message.customType === VIBE_MODE_CONTEXT_MESSAGE_TYPE;
+	get orchestraModeEnabled(): boolean {
+		return this.#orchestraModeEnabled;
+	}
+
+	/** gk: Orchestra mode on/off; off drops the conductor context from history and queues. */
+	setOrchestraModeEnabled(enabled: boolean): void {
+		this.#orchestraModeEnabled = enabled;
+		if (!enabled) this.#dropModeContext(GK_ORCHESTRA_CONTEXT_MESSAGE_TYPE, "orchestra-mode-exit");
+	}
+
+	/** gk: crew worker spawner (top-level interactive sessions only). */
+	createCrewSpawner(): CrewWorkerSpawner | undefined {
+		return this.#createCrewSpawner?.();
+	}
+
+	/** Remove a mode's injected context messages from history, queues and pending next-turn messages. */
+	#dropModeContext(customType: string, reason: string): void {
+		const isContext = (message: AgentMessage): boolean =>
+			message.role === "custom" && message.customType === customType;
 		const messages = this.agent.state.messages;
-		const filtered = messages.filter(message => !isVibeContext(message));
+		const filtered = messages.filter(message => !isContext(message));
 		const historyChanged = filtered.length !== messages.length;
 		if (historyChanged) this.agent.replaceMessages(filtered);
 
 		const steering = this.agent.peekSteeringQueue();
 		const followUp = this.agent.peekFollowUpQueue();
-		const filteredSteering = steering.filter(message => !isVibeContext(message));
-		const filteredFollowUp = followUp.filter(message => !isVibeContext(message));
+		const filteredSteering = steering.filter(message => !isContext(message));
+		const filteredFollowUp = followUp.filter(message => !isContext(message));
 		if (filteredSteering.length !== steering.length || filteredFollowUp.length !== followUp.length) {
 			this.agent.replaceQueues(filteredSteering, filteredFollowUp);
 			this.#reconcileQueuedMessageDrain();
 		}
-		this.#pendingNextTurnMessages = this.#pendingNextTurnMessages.filter(message => !isVibeContext(message));
+		this.#pendingNextTurnMessages = this.#pendingNextTurnMessages.filter(message => !isContext(message));
 
 		if (!historyChanged) return;
-		this.#advisors.resetAllRuntimes("vibe-mode-exit");
+		this.#advisors.resetAllRuntimes(reason);
 		this.#closeCodexProviderSessionsForHistoryRewrite();
 	}
 
@@ -8538,6 +8577,21 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			role: "custom",
 			customType: VIBE_MODE_CONTEXT_MESSAGE_TYPE,
 			content: prompt.render(vibeModeActivePrompt, {
+				todoAvailable: this.getActiveToolNames().includes("todo"),
+			}),
+			display: false,
+			attribution: "agent",
+			timestamp: Date.now(),
+		};
+	}
+
+	/** gk: the conductor prompt, rebuilt for every prompt while Orchestra mode is on (never persisted). */
+	#buildOrchestraModeMessage(): CustomMessage | null {
+		if (!this.#orchestraModeEnabled) return null;
+		return {
+			role: "custom",
+			customType: GK_ORCHESTRA_CONTEXT_MESSAGE_TYPE,
+			content: prompt.render(gkConductorPrompt, {
 				todoAvailable: this.getActiveToolNames().includes("todo"),
 			}),
 			display: false,
@@ -9615,6 +9669,10 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			const vibeModeMessage = this.#buildVibeModeMessage();
 			if (vibeModeMessage) {
 				messages.push(vibeModeMessage);
+			}
+			const orchestraModeMessage = this.#buildOrchestraModeMessage(); // gk: conductor context
+			if (orchestraModeMessage) {
+				messages.push(orchestraModeMessage);
 			}
 			if (options?.prependMessages) {
 				messages.push(...options.prependMessages);

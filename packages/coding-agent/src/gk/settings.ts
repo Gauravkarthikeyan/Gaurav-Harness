@@ -28,6 +28,32 @@ export const cfgGkLastLaunchMode = register({
 	default: "solo",
 });
 
+/** Skip the Casting Board for plans within budget (spec §5.4); the board's `a` key turns it on. */
+export const cfgGkOrchestraAutoApprove = register({
+	id: "gk.orchestra.autoApprove",
+	type: "boolean",
+	default: false,
+	ui: {
+		tab: "interaction",
+		group: "Orchestra",
+		label: "Auto-approve crew plans",
+		description: "Start crew plans without the Casting Board when they fit the run budget",
+	},
+});
+
+/** Run budget in USD; a plan estimated above it needs an explicit `!` on the Casting Board. 0 = no budget. */
+export const cfgGkOrchestraMaxRunUsd = register({
+	id: "gk.orchestra.maxRunUsd",
+	type: "number",
+	default: 2,
+	ui: {
+		tab: "interaction",
+		group: "Orchestra",
+		label: "Run budget (USD)",
+		description: "Crew plans estimated above this need an explicit confirm on the Casting Board (0 = no budget)",
+	},
+});
+
 /** Daily spend budget in USD across all sessions; the Stage's TODAY field warns once it is reached. Unset = none. */
 export const cfgGkBudgetDailyUsd = register({
 	id: "gk.budget.dailyUsd",

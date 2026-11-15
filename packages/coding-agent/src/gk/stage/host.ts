@@ -32,6 +32,7 @@ import type { AgentSessionEvent } from "../../session/agent-session-events";
 import { CellBuffer } from "./compositor";
 import { branchLabel, type GitLoader, type GitSnapshot, loadGitSnapshot } from "./git-source";
 import { layoutStage, type Rect, type StageLayout, toLayoutTiles } from "./layout";
+import type { StageOrchestra } from "./orchestra-hooks";
 import { type HostStyle, type HostToken, themeStyle } from "./style";
 import { type Tile, type TileState, TileStore } from "./tiles";
 import {
@@ -226,6 +227,7 @@ export class StageHost {
 	#scroll = 0;
 	#maxScroll = 0;
 	#narration = "";
+	#orchestra: StageOrchestra | null = null;
 	#logo: { theme: string; rows: string[] } | undefined;
 	#messageIndex: { count: number; calls: Map<string, ToolRecord> } = { count: -1, calls: new Map() };
 
@@ -293,6 +295,7 @@ export class StageHost {
 		this.#ticks++;
 		if (this.#ticks % SAMPLE_EVERY_TICKS === 0) this.#sample();
 		this.#refreshAgentStats();
+		this.#orchestra?.tick(this.#now());
 		this.store.tick();
 		this.#ui.requestRender();
 	}
@@ -358,6 +361,8 @@ export class StageHost {
 
 	#agentTokenOf(agentId: string | null): StageToken {
 		if (agentId === null) return "accent";
+		const crew = this.#orchestra?.agentToken(agentId);
+		if (crew) return crew;
 		const index = [...this.#agents.keys()].indexOf(agentId);
 		return agentToken(Math.max(0, index));
 	}
@@ -456,6 +461,23 @@ export class StageHost {
 	#pushEvent(event: StageEvent): void {
 		this.#events.unshift(event);
 		if (this.#events.length > EVENTS_MAX) this.#events.length = EVENTS_MAX;
+	}
+
+	/** Add a row to the events tail (Orchestra run milestones). */
+	note(event: { agent: string; agentToken?: StageToken; glyph: StateGlyph; text: string }): void {
+		this.#pushEvent({ at: this.#now(), ...event });
+		this.#changed();
+	}
+
+	requestRender(): void {
+		this.#ui.requestRender();
+	}
+
+	/** gk: hand the Stage to Orchestra mode (orchestra preset, crew panes and widgets); `null` returns to Solo. */
+	setOrchestra(orchestra: StageOrchestra | null): void {
+		this.#orchestra = orchestra;
+		this.#layoutKey = "";
+		this.#changed();
 	}
 
 	#syncAgents(): void {
@@ -718,7 +740,7 @@ export class StageHost {
 		const input = {
 			cols,
 			rows,
-			preset: "calm" as const,
+			preset: this.#orchestra ? ("orchestra" as const) : ("calm" as const),
 			tiles,
 			zoomedId: this.#zoomedId,
 			headerRows: cols >= BIG_LOGO_MIN_COLS ? 3 : 2,
@@ -881,6 +903,7 @@ export class StageHost {
 					label: "SESSION",
 					spent: `${money(stats?.cost ?? 0)}${s("muted", ` · ${compact(tokens?.total ?? 0)} tok · ${stats?.toolCalls ?? 0} call${stats?.toolCalls === 1 ? "" : "s"}`)}`,
 				},
+				...this.#orchestra?.header(),
 				today: "–",
 				ctx: {
 					used: ctx?.tokens ?? 0,
@@ -915,6 +938,7 @@ export class StageHost {
 		if (todos.length > 0) {
 			groups.push([{ text: `todo ${todos.filter(t => t.state === "done").length}/${todos.length}` }]);
 		}
+		if (this.#orchestra) return renderTabs(this.#orchestra.tabs(), width, 1, this.#style);
 		return renderTabs({ tabs: [{ index: 0, name: "session", active: true }], summary: groups }, width, 1, this.#style);
 	}
 
@@ -930,6 +954,7 @@ export class StageHost {
 		return renderStatusBar(
 			{
 				window: "0:session",
+				...this.#orchestra?.footer(),
 				branch: this.#git ? branchLabel(this.#git) : undefined,
 				model: modelLabel(session?.model),
 				role: role || undefined,
@@ -1044,10 +1069,21 @@ export class StageHost {
 		const anyFocused = this.store.focused() !== undefined;
 		const focused = tile.focused || (tile.kind === "transcript" && !anyFocused);
 		const border: StageToken = tile.state === "error" && tile.kind !== "command" ? "error" : focused ? "borderAccent" : "border";
+		if (this.#orchestra && (tile.kind === "proc" || tile.kind === "dag" || tile.kind === "telemetry")) {
+			const widget = this.#orchestra.widget(tile, Math.max(0, rect.w - 2), Math.max(0, rect.h - 2), now, s);
+			if (widget) {
+				const inner = this.#frame(buf, rect, this.#paneTitle(undefined, widget.title, "", false), widget.badge, "border");
+				buf.blit(widget.rows, inner);
+				return null;
+			}
+		}
 		switch (tile.kind) {
 			case "transcript": {
 				const session = this.#session;
-				const title = this.#paneTitle(index, "session", modelLabel(session?.model), focused);
+				const orchestraFrame = this.#orchestra?.transcriptFrame(s);
+				const title = orchestraFrame
+					? this.#paneTitle(index, orchestraFrame.title, "", focused)
+					: this.#paneTitle(index, "session", modelLabel(session?.model), focused);
 				const inner = this.#frame(buf, rect, title, s("badgeBg", s("accent", " @main ")), border);
 				const out = renderTranscriptPane(
 					{
@@ -1055,6 +1091,9 @@ export class StageHost {
 						chrome: this.#opts.chrome(),
 						status: this.#transcriptStatus(inner.w),
 						tool: id => this.toolRecord(id),
+						toolRows: this.#orchestra
+							? (record, width) => this.#orchestra?.toolRows(record, width, now, s)
+							: undefined,
 						isAssistant: this.#opts.isAssistant,
 						expandTools: this.#opts.expandTools?.() ?? false,
 						scroll: this.#scroll,
@@ -1131,6 +1170,28 @@ export class StageHost {
 			case "agent": {
 				const agentId = tile.id.slice(6);
 				const info = this.#agents.get(agentId);
+				const view = this.#orchestra?.agentPane({
+					agentId,
+					tile,
+					tools: (info?.tools ?? []).map(id => this.#tools.get(id)).filter((r): r is ToolRecord => r !== undefined),
+					stats: info?.stats,
+					now,
+					width: Math.max(0, rect.w - 2),
+					style: s,
+				});
+				if (view) {
+					// gk: Orchestra worker pane (title, @name badge, body, statusline from the crew adapter).
+					const paneTitle = this.#paneTitle(index, view.title, "", focused);
+					const inner = this.#frame(buf, rect, paneTitle, view.badge, border);
+					const statusH = view.status && inner.h >= 2 ? 1 : 0;
+					const bodyH = Math.max(0, inner.h - statusH);
+					buf.blit(view.rows.slice(Math.max(0, view.rows.length - bodyH)), { ...inner, h: bodyH });
+					if (view.status && statusH) {
+						const statusRect = { x: inner.x, y: inner.y + inner.h - 1, w: inner.w, h: 1 };
+						buf.blit(renderPaneStatus(view.status, inner.w, 1, s), statusRect);
+					}
+					return null;
+				}
 				const lineage = this.store.lineageTitle(tile.id);
 				const running = tile.state === "running";
 				const elapsed = (tile.endedAt ?? now) - tile.createdAt;

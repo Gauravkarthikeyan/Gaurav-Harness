@@ -1,0 +1,1 @@
+Replaces the worker on `item` with one on a higher tier (current tier + 1, excluding its current model). The new worker gets the original brief, your `note` on what went wrong, and the previous worker's report. Use it after a worker has failed the same item twice; do not redo the work yourself.

@@ -315,6 +315,7 @@ describe("CrewRun", () => {
 		const summary = await run.done;
 		expect(events).toEqual([
 			{ type: "item-state", itemId: "a", state: "running" },
+			{ type: "item-worker", itemId: "a", workerId: "w1" },
 			{ type: "item-state", itemId: "a", state: "done" },
 			{ type: "run-done", summary },
 		]);
@@ -322,7 +323,7 @@ describe("CrewRun", () => {
 		off();
 		const second = setup([item("b")]);
 		second.run.events.on(() => {});
-		expect(events).toHaveLength(3);
+		expect(events).toHaveLength(4);
 	});
 
 	it("finishes immediately for an empty plan", async () => {

@@ -65,6 +65,8 @@ export const MODEL_ROLES: Record<ModelRole, ModelRoleInfo> = {
 	task: { tag: "TASK", name: "Subtask", color: "muted", section: "chat", accepts: acceptsChat },
 	advisor: { tag: "ADVISOR", name: "Advisor", color: "accent", section: "chat", accepts: acceptsChat },
 	widget: { tag: "WIDGET", name: "Job widgets", color: "dim", section: "chat", accepts: acceptsChat },
+	// gk: Orchestra conductor; unset = the session's default model.
+	conductor: { tag: "COND", name: "Conductor", color: "accent", section: "chat", accepts: acceptsChat },
 	image: {
 		tag: "IMAGE",
 		name: "Image generation",

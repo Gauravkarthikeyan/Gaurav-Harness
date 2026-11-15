@@ -291,6 +291,7 @@ import {
 	VibeSessionRegistry,
 } from "../vibe/runtime";
 import type { StageHost } from "../gk/stage/host"; // gk:
+import { enterOrchestraMode, exitOrchestraMode, type OrchestraMode } from "../gk/orchestra-mode"; // gk:
 import { mountStage, shouldMountStage } from "../gk/stage/mount"; // gk:
 import { AssistantMessageComponent } from "@oh-my-pi/pi-tui/chat/assistant-message";
 import { setSvgFigureRendering } from "@oh-my-pi/pi-tui/chat/svg-figure";
@@ -1435,6 +1436,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	goalModeEnabled = false;
 	goalModePaused = false;
 	vibeModeEnabled = false;
+	#orchestraMode: OrchestraMode | undefined; // gk: Orchestra conductor while on
 	planModePlanFilePath: string | undefined = undefined;
 	loopModeEnabled = false;
 	loopModePaused = false;
@@ -6066,6 +6068,10 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.showWarning("Exit vibe mode first.");
 			return;
 		}
+		if (this.#orchestraMode) {
+			this.showWarning("Exit orchestra mode first."); // gk:
+			return;
+		}
 
 		this.planModePaused = false;
 
@@ -6314,6 +6320,10 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 		if (this.vibeModeEnabled) {
 			this.showWarning("Exit vibe mode first.");
+			return;
+		}
+		if (this.#orchestraMode) {
+			this.showWarning("Exit orchestra mode first."); // gk:
 			return;
 		}
 		const previousTools = this.session.getEnabledToolNames().filter(name => name !== "goal");
@@ -7255,6 +7265,82 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 	}
 
+	// gk: Orchestra mode (spec §5.4) — the session becomes the read-only conductor.
+	get orchestraModeEnabled(): boolean {
+		return this.#orchestraMode !== undefined;
+	}
+
+	/**
+	 * `/orchestra` toggle and the `--orchestra` launch path. Entering installs the crew tools on a
+	 * `read` (+ `todo`) toolset and the conductor prompt; exiting cancels the run and kills its workers.
+	 * An `initialPrompt` is submitted once the mode is on.
+	 */
+	async handleOrchestraModeCommand(initialPrompt?: string): Promise<boolean> {
+		if (this.#orchestraMode) {
+			const mode = this.#orchestraMode;
+			this.#orchestraMode = undefined;
+			const killed = await exitOrchestraMode(mode);
+			this.showStatus(
+				killed > 0
+					? `Orchestra mode off. Stopped ${killed} worker${killed === 1 ? "" : "s"}.`
+					: "Orchestra mode off.",
+			);
+			return false;
+		}
+		if (this.planModeEnabled || this.planModePaused) {
+			this.#warnPlanModeBlocks();
+			return false;
+		}
+		if (this.goalModeEnabled || this.goalModePaused) {
+			this.showWarning("Exit goal mode first.");
+			return false;
+		}
+		if (this.vibeModeEnabled) {
+			this.showWarning("Exit vibe mode first.");
+			return false;
+		}
+		const vibeRegistry = VibeSessionRegistry.global();
+		const parent = this.#vibeParentSession();
+		try {
+			this.#orchestraMode = await enterOrchestraMode({
+				session: this.session,
+				settings: this.settings,
+				ui: this.ui,
+				stage: () => this.#stageHost,
+				focusEditor: () => this.#selectorController.focusActiveEditorArea(),
+				showStatus: message => this.showStatus(message),
+				addTranscriptBlock: component => {
+					this.chatContainer.addChild(component);
+					this.ui.requestRender();
+				},
+				openWorkerScope: () => {
+					const scope = vibeRegistry.ownerScope(parent);
+					vibeRegistry.activateScope(scope);
+					return () => vibeRegistry.killAll(parent, scope);
+				},
+			});
+		} catch (error) {
+			this.showError(`Orchestra mode failed to start: ${error instanceof Error ? error.message : String(error)}`);
+			return false;
+		}
+		this.lastAssistantUsage = undefined;
+		this.showStatus(
+			`Orchestra mode on. Conductor ${this.session.model ? `${this.session.model.provider}/${this.session.model.id}` : "(no model)"}: read + crew tools; plans go through the Casting Board.`,
+		);
+		if (!initialPrompt) return false;
+		const onInput = this.onInputCallback;
+		if (onInput && !this.session.isStreaming) {
+			onInput(this.startPendingSubmission({ text: initialPrompt }, { preserveDraft: true }));
+		} else {
+			await this.withLocalSubmission(
+				initialPrompt,
+				() => this.session.prompt(initialPrompt, { streamingBehavior: "steer" }),
+				{ imageCount: 0 },
+			);
+		}
+		return true;
+	}
+
 	async #enterVibeMode(options?: { persistModeChange?: boolean; previousTools?: string[] }): Promise<void> {
 		if (this.vibeModeEnabled) {
 			return;
@@ -7275,6 +7361,10 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 		if (this.goalModeEnabled || this.goalModePaused) {
 			this.showWarning("Exit goal mode first.");
+			return;
+		}
+		if (this.#orchestraMode) {
+			this.showWarning("Exit orchestra mode first."); // gk:
 			return;
 		}
 

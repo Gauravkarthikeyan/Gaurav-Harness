@@ -361,6 +361,7 @@ import { formatLocalCalendarDate } from "@oh-my-pi/pi-tui/chrome/local-date";
 import { normalizePromptPath } from "./utils/prompt-path";
 import { buildNamedToolChoice } from "./utils/tool-choice";
 import { VibeSessionRegistry } from "./vibe/runtime";
+import { createVibeCrewSpawner } from "./gk/crew-runtime"; // gk: Orchestra crew
 import { registerLocalInferenceApi } from "./tiny/local-inference-api";
 import { shutdownTinyTitleClient } from "./tiny/title-client";
 import { buildWorkspaceTree, type WorkspaceTree } from "./workspace-tree";
@@ -5366,6 +5367,11 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			createVibeTools:
 				(options.taskDepth ?? 0) === 0 && !options.parentTaskPrefix
 					? () => createVibeTools(toolSession)
+					: undefined,
+			// gk: Orchestra crew workers are vibe worker sessions pinned to the cast model.
+			createCrewSpawner:
+				(options.taskDepth ?? 0) === 0 && !options.parentTaskPrefix
+					? () => createVibeCrewSpawner(VibeSessionRegistry.global(), toolSession)
 					: undefined,
 			builtInToolNames: builtInRegistryToolNames,
 			mcpManagerToolNames: initialMcpManagerToolNames,

@@ -334,6 +334,26 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 		},
 	},
 	{
+		// gk: Orchestra mode (spec §5.4)
+		name: "orchestra",
+		icon: "agents",
+		description: "Toggle Orchestra mode (read-only conductor plans, roster models build; Casting Board approves)",
+		inlineHint: "[prompt]",
+		allowArgs: true,
+		getTuiAutocompleteDescription: runtime => {
+			if (runtime.ctx.orchestraModeEnabled) return "Orchestra: on";
+			if (runtime.ctx.planModeEnabled) return "Orchestra: blocked by plan mode";
+			if (runtime.ctx.goalModeEnabled) return "Orchestra: blocked by goal mode";
+			if (runtime.ctx.vibeModeEnabled) return "Orchestra: blocked by vibe mode";
+			return "Orchestra: off";
+		},
+		handleTui: async (command, runtime) => {
+			await runWithDetachedDraft(command, runtime, () =>
+				runtime.ctx.handleOrchestraModeCommand(command.args || undefined),
+			);
+		},
+	},
+	{
 		name: "goal",
 		icon: "goal",
 		description: "Toggle goal mode (persistent autonomous objective for this session)",

@@ -18,11 +18,15 @@ import { cfgComputerEnabled } from "../tools/settings";
 import { GK_VERSION } from "./brand";
 import type { LaunchMode, LaunchModeResolution } from "./launch-mode";
 import { availableRosterModels, buildRoster, loadRosterOverrides } from "./roster";
-import { cfgGkLastLaunchMode } from "./settings";
+import { cfgGkLastLaunchMode, cfgGkOrchestraAutoApprove, cfgGkOrchestraMaxRunUsd } from "./settings";
 import type { RosterEntry } from "./types";
 
-/** Shown when Orchestra is chosen before its mode is wired into the launch flow. */
-export const ORCHESTRA_NOT_WIRED = "Orchestra mode is not wired yet";
+/** `$2.00 / run · board approves` for the Orchestra card. */
+function budgetFact(settings: Settings): string {
+	const max = cfgGkOrchestraMaxRunUsd.get(settings);
+	const approval = cfgGkOrchestraAutoApprove.get(settings) ? "auto-approve" : "board approves";
+	return `${max > 0 ? `$${max.toFixed(2)} / run` : "no budget"} · ${approval}`;
+}
 
 export interface GkLaunchSources {
 	readonly settings: Settings;
@@ -164,7 +168,7 @@ class StartupChecks {
 			orchestra: [
 				{ key: "conductor", value: conductor ?? "none · run /login" },
 				{ key: "roster", value: `${roster.length} models${tiers ? ` · ${tiers}` : ""}` },
-				{ key: "status", value: "not wired yet · starts Solo", tone: "warn" },
+				{ key: "budget", value: budgetFact(settings) },
 			],
 		};
 	}

@@ -417,6 +417,7 @@ export class SessionTools {
 	#createVibeTools: (() => AgentTool[]) | undefined;
 	#createThinkTool: SessionToolsOptions["createThinkTool"];
 	#installedVibeToolNames = new Set<string>();
+	#installedCrewToolNames = new Set<string>(); // gk: Orchestra crew tools
 	/** An MCP refresh landed while vibe narrowed the active set; vibe exit activates its manager tools. */
 	#vibeDeferredMcpRefresh = false;
 	#builtInToolNames: Set<string>;
@@ -1093,6 +1094,31 @@ export class SessionTools {
 				...(this.#vibeDeferredMcpRefresh ? this.#mcpManagerToolNames : []),
 			]);
 			this.#vibeDeferredMcpRefresh = false;
+		});
+	}
+
+	/** gk: installs Orchestra's crew tools and narrows the active set to `baseToolNames` plus them. */
+	activateCrewTools(tools: AgentTool[], baseToolNames: string[]): Promise<void> {
+		return this.runToolRegistryMutation(async () => {
+			for (const tool of tools) {
+				if (this.#toolRegistry.has(tool.name)) continue;
+				this.#toolRegistry.set(tool.name, this.#wrapRuntimeTool(tool));
+				this.#builtInToolNames.add(tool.name);
+				this.#installedCrewToolNames.add(tool.name);
+			}
+			await this.#applyActiveToolsByName([...new Set([...baseToolNames, ...tools.map(tool => tool.name)])]);
+		});
+	}
+
+	/** gk: uninstalls the crew tools and activates the replacement set. */
+	deactivateCrewTools(nextToolNames: string[]): Promise<void> {
+		return this.runToolRegistryMutation(async () => {
+			for (const name of this.#installedCrewToolNames) {
+				this.#toolRegistry.delete(name);
+				this.#builtInToolNames.delete(name);
+			}
+			this.#installedCrewToolNames.clear();
+			await this.#applyActiveToolsByName(nextToolNames);
 		});
 	}
 

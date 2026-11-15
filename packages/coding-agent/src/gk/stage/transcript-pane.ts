@@ -36,6 +36,8 @@ export interface TranscriptPaneInput {
 	status?: readonly string[];
 	/** Tool record for a call id; `undefined` falls back to omp's own card. */
 	tool: (id: string) => ToolRecord | undefined;
+	/** Rows that replace a call's one-liner (Orchestra: `crew_plan` + the PLAN table); `undefined` keeps it. */
+	toolRows?: (record: ToolRecord, width: number) => string[] | undefined;
 	/** Assistant-message blocks get the accent bar. */
 	isAssistant: (component: Component) => boolean;
 	/** omp's "expand tools" toggle: draw full cards instead of one-liners. */
@@ -70,11 +72,14 @@ function trimBlank(rows: readonly string[]): readonly string[] {
 function blockRows(component: Component, width: number, input: TranscriptPaneInput): { rows: readonly string[]; compact: boolean } {
 	const { style } = input;
 	if (isToolBlock(component) && !input.expandTools) {
-		const events = component.gkToolCallIds.flatMap(id => {
+		const rows: string[] = [];
+		for (const id of component.gkToolCallIds) {
 			const record = input.tool(id);
-			return record ? [toolEvent(record, input.lineContext)] : [];
-		});
-		if (events.length > 0) return { rows: eventRows(events, width, style), compact: true };
+			if (!record) continue;
+			const custom = input.toolRows?.(record, width);
+			rows.push(...(custom ?? eventRows([toolEvent(record, input.lineContext)], width, style)));
+		}
+		if (rows.length > 0) return { rows, compact: true };
 	}
 	if (isPromptBlock(component)) {
 		const { text, timestamp } = component.gkPrompt;

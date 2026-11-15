@@ -1,0 +1,1 @@
+Sends a message to the worker on `item`: steers it mid-turn, or starts its next turn when idle. Use it for small fixes after you read the worker's changes, with exact instructions. The reply delivers itself.

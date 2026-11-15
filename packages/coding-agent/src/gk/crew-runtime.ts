@@ -25,6 +25,8 @@ export interface CrewWorkerSpawner {
 	spawn(a: { name: string; prompt: string; model: string }): Promise<CrewWorkerHandle>;
 	send(workerId: string, msg: string): Promise<void>;
 	kill(workerId: string): Promise<void>;
+	/** Live cumulative cost of a worker session (follow-up turns included); falls back to settled results. */
+	costOf?(workerId: string): number | undefined;
 }
 
 export interface CrewRunSummary {
@@ -44,7 +46,21 @@ export interface CrewRunSummary {
 
 export type CrewEvent =
 	| { type: "item-state"; itemId: string; state: CrewItemState }
+	| { type: "item-worker"; itemId: string; workerId: string }
 	| { type: "run-done"; summary: CrewRunSummary };
+
+/** Read-only view of one item, for the Stage and the crew tools. */
+export interface CrewItemSnapshot {
+	item: WorkItem;
+	name: string;
+	assignment: Assignment;
+	state: CrewItemState;
+	workerId: string | undefined;
+	startedAt: number | undefined;
+	endedAt: number | undefined;
+	costUsd: number;
+	lastText: string | undefined;
+}
 
 export interface CrewEvents {
 	on(listener: (e: CrewEvent) => void): () => void;
@@ -60,6 +76,8 @@ export interface CrewRunOptions {
 	onChange(): void;
 	/** First line of the user's prompt, recorded in the ledger. */
 	promptHead?: string;
+	/** Employee names by item id (the Casting Board shows them before the run exists); generated when absent. */
+	names?: Record<string, string>;
 }
 
 /** Concurrency cap for a selector the roster does not list (e.g. the conductor fallback). */
@@ -82,7 +100,10 @@ interface ItemRuntime {
 	/** Failed only because a dependency failed; revived if that dependency is escalated. */
 	depFailed: boolean;
 	excluded: string[];
+	/** Cost reported by settled turns. */
 	costUsd: number;
+	/** Every worker id that ran this item (escalations add one). */
+	workers: string[];
 	startedAt?: number;
 	endedAt?: number;
 	lastText?: string;
@@ -144,13 +165,14 @@ export class CrewRun {
 			if (!assignment) throw new Error(`Crew item "${item.id}" has no assignment.`);
 			this.#items.set(item.id, {
 				item,
-				name: generateTaskName(),
+				name: opts.names?.[item.id] ?? generateTaskName(),
 				assignment,
 				state: "waiting",
 				generation: 0,
 				depFailed: false,
 				excluded: [],
 				costUsd: 0,
+				workers: [],
 			});
 		}
 	}
@@ -174,6 +196,38 @@ export class CrewRun {
 	/** Current assignment (changes after `escalate`). */
 	assignment(itemId: string): Assignment {
 		return this.#get(itemId).assignment;
+	}
+
+	/** Live worker id for the item, once its spawn resolved. */
+	workerId(itemId: string): string | undefined {
+		return this.#get(itemId).workerId;
+	}
+
+	/** Every item in plan order. */
+	snapshot(): CrewItemSnapshot[] {
+		return [...this.#items.values()].map(rt => ({
+			item: rt.item,
+			name: rt.name,
+			assignment: rt.assignment,
+			state: rt.state,
+			workerId: rt.workerId,
+			startedAt: rt.startedAt,
+			endedAt: rt.endedAt,
+			costUsd: this.#costOf(rt),
+			lastText: rt.lastText,
+		}));
+	}
+
+	#costOf(rt: ItemRuntime): number {
+		const live = this.#opts.spawner.costOf;
+		if (!live || rt.workers.length === 0) return rt.costUsd;
+		let total = 0;
+		for (const id of rt.workers) {
+			const cost = live.call(this.#opts.spawner, id);
+			if (cost === undefined || !Number.isFinite(cost)) return rt.costUsd;
+			total += cost;
+		}
+		return Math.max(total, rt.costUsd);
 	}
 
 	async send(itemId: string, msg: string): Promise<void> {
@@ -228,6 +282,38 @@ export class CrewRun {
 		}
 		this.#pump();
 		return next;
+	}
+
+	/** Stop one item's worker and mark it cancelled; items depending on it fail instead of starting. */
+	async killItem(itemId: string): Promise<void> {
+		if (this.#finished || this.#cancelled) throw new Error("Crew run has already finished.");
+		const rt = this.#get(itemId);
+		if (rt.state !== "running" && rt.state !== "waiting") {
+			throw new Error(`Crew item "${itemId}" is already ${rt.state}.`);
+		}
+		const spawning = rt.spawning;
+		const worker = rt.workerId;
+		rt.generation++;
+		rt.workerId = undefined;
+		rt.spawning = undefined;
+		rt.endedAt = rt.startedAt !== undefined ? Date.now() : undefined;
+		this.#setState(rt, "cancelled");
+		// A spawn still in flight sees the bumped generation and kills its own worker.
+		if (spawning) await spawning;
+		if (worker) await this.#kill(worker);
+		this.#pump();
+	}
+
+	/** True when nothing is running or waiting (the run may still be open for escalation). */
+	get settled(): boolean {
+		for (const rt of this.#items.values()) {
+			if (rt.state === "running" || rt.state === "waiting") return false;
+		}
+		return true;
+	}
+
+	get finished(): boolean {
+		return this.#finished;
 	}
 
 	/** End a run that has no running or waiting items (e.g. the conductor gave up on failed items). */
@@ -350,7 +436,12 @@ export class CrewRun {
 			return;
 		}
 		const current = this.#isCurrent(rt, generation);
-		if (current) rt.workerId = handle.workerId;
+		rt.workers.push(handle.workerId);
+		if (current) {
+			rt.workerId = handle.workerId;
+			this.#emit({ type: "item-worker", itemId: rt.item.id, workerId: handle.workerId });
+			this.#opts.onChange();
+		}
 		handle.settled.then(
 			result => {
 				if (Number.isFinite(result.costUsd)) rt.costUsd += result.costUsd;
@@ -395,7 +486,7 @@ export class CrewRun {
 			name: rt.name,
 			selector: rt.assignment.selector,
 			state: rt.state,
-			costUsd: rt.costUsd,
+			costUsd: this.#costOf(rt),
 			durationMs: rt.startedAt !== undefined && rt.endedAt !== undefined ? rt.endedAt - rt.startedAt : 0,
 		}));
 		const status = this.#cancelled
@@ -460,6 +551,10 @@ export function createVibeCrewSpawner(registry: VibeSessionRegistry, session: To
 		},
 		async kill(workerId) {
 			await registry.kill(session, workerId);
+		},
+		costOf(workerId) {
+			const ref = AgentRegistry.global().get(workerId);
+			return ref?.session?.getSessionStats().cost ?? ref?.history?.metrics?.cost;
 		},
 	};
 }

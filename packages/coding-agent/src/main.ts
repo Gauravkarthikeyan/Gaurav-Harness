@@ -202,7 +202,7 @@ import { cfgSkillsIncludeSkills } from "./extensibility/settings";
 import { cfgWorkspaceAdditionalDirectories } from "./session/context-settings";
 import { formatGkVersion, GK_VERSION } from "./gk/brand"; // gk: version string
 import { takeOmpImportNotice } from "./gk/import-omp"; // gk: first-run omp profile import notice
-import { ORCHESTRA_NOT_WIRED, runGkLaunch } from "./gk/launch"; // gk: splash v2 + mode picker
+import { runGkLaunch } from "./gk/launch"; // gk: splash v2 + mode picker
 import { type LaunchModeResolution, resolveLaunchMode } from "./gk/launch-mode"; // gk: launch mode
 import { cfgGkLastLaunchMode, cfgGkLaunchMode } from "./gk/settings"; // gk: launch mode
 
@@ -747,7 +747,7 @@ async function runInteractiveMode(
 			await mode.shutdown({ cancellable: false });
 			return;
 		}
-		if (launched.mode === "orchestra") notifs.push({ kind: "warn", message: ORCHESTRA_NOT_WIRED });
+		if (launched.mode === "orchestra") await mode.handleOrchestraModeCommand(); // gk: Orchestra launch
 
 		// Consume failures immediately, but defer any banner until the transcript is stable.
 		const checkedVersionPromise = versionCheckPromise.catch(() => undefined);
