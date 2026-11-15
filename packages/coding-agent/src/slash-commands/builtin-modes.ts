@@ -33,6 +33,7 @@ import { handleSecurityCommand } from "./helpers/security";
 import type { SlashCommandSpec } from "./types";
 import { theme } from "@oh-my-pi/pi-tui/theme";
 import { CreditsCard } from "../gk/credits"; // gk: /credits
+import { showCapabilities } from "../gk/ui/capabilities"; // gk: /caps
 
 import {
 	cfgComputerBackgroundFallback,
@@ -262,6 +263,17 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 		description: "Open settings menu",
 		handleTui: (_command, runtime) => {
 			runtime.ctx.showSettingsSelector();
+			clearSubmittedText(runtime);
+		},
+	},
+	{
+		// gk: Capabilities center (MCP · Skills · Plugins); the palette's Capabilities and MCP rows submit `/caps`.
+		name: "caps",
+		aliases: ["capabilities"],
+		icon: "settings",
+		description: "Open the Capabilities center (MCP servers, skills, plugins)",
+		handleTui: (_command, runtime) => {
+			showCapabilities(runtime.ctx);
 			clearSubmittedText(runtime);
 		},
 	},

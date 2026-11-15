@@ -66,6 +66,15 @@ export function capabilitySummary(
 	return `MCP ${connected}/${mcp.length} · skills ${skillCount} · plugins ${pluginCount}`;
 }
 
+/** A server found in another tool's config (Claude Code, Cursor, VS Code) that GK does not own yet. */
+export interface McpImportCandidate {
+	name: string;
+	/** Display name of the tool whose config defines it. */
+	from: string;
+	/** One-line transport summary: the command or URL. */
+	detail: string;
+}
+
 export interface CapabilitiesSource {
 	mcp(): Promise<McpRow[]>;
 	skills(): SkillRow[];
@@ -76,4 +85,8 @@ export interface CapabilitiesSource {
 	setPluginEnabled(name: string, enabled: boolean): Promise<void>;
 	/** Start the add-server flow (`/mcp add`). */
 	addMcp(): void;
+	/** Servers importable from `.claude` / `.cursor` / `.vscode` configs. Reads only. */
+	importCandidates(): Promise<McpImportCandidate[]>;
+	/** Write `candidates` into GK's user MCP config, disabled until tested. */
+	importMcp(candidates: readonly McpImportCandidate[]): Promise<void>;
 }

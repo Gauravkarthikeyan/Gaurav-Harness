@@ -7,10 +7,13 @@ import { type Component, matchesKey, visibleWidth } from "@oh-my-pi/pi-tui";
 import { theme } from "@oh-my-pi/pi-tui/theme";
 import { getMCPConfigPath, getProjectDir } from "@oh-my-pi/pi-utils";
 import { listPlugins } from "../../extensibility/plugins/installer";
-import { readMCPConfigFile } from "../../mcp/config-writer";
+import { loadAllMCPConfigs } from "../../mcp/config";
+import { addMCPServer, readMCPConfigFile } from "../../mcp/config-writer";
+import type { MCPServerConfig } from "../../mcp/types";
 import type { InteractiveModeContext } from "../../modes/types";
 import {
 	type CapabilitiesSource,
+	type McpImportCandidate,
 	MCP_CONNECT_TIMEOUT_MS,
 	MCP_TIMEOUT_REASON,
 	type McpRow,
@@ -64,6 +67,12 @@ function stateTone(state: McpRowState): "success" | "warning" | "error" | "muted
 	}
 }
 
+/** `i` import preview; `candidates` is undefined while other tools' configs are being read. */
+interface ImportPreview {
+	candidates: McpImportCandidate[] | undefined;
+	saving: boolean;
+}
+
 export class CapabilitiesOverlay implements Component {
 	readonly #source: CapabilitiesSource;
 	readonly #options: CapabilitiesOverlayOptions;
@@ -77,12 +86,17 @@ export class CapabilitiesOverlay implements Component {
 	/** Connect attempts in flight or timed out, by server name; overrides the manager's state. */
 	readonly #attempts = new Map<string, { state: McpRowState; timer: unknown; generation: number }>();
 	#generation = 0;
+	/** Open `i` import preview, if any. */
+	#import: ImportPreview | undefined;
 	#disposed = false;
 
 	constructor(source: CapabilitiesSource, options: CapabilitiesOverlayOptions) {
 		this.#source = source;
 		this.#options = options;
-		this.#timers = options.timers ?? { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: handle => clearTimeout(handle as NodeJS.Timeout) };
+		this.#timers = options.timers ?? {
+			setTimeout: (fn, ms) => setTimeout(fn, ms),
+			clearTimeout: handle => clearTimeout(handle as NodeJS.Timeout),
+		};
 		this.#skills = source.skills();
 		void this.#reload();
 	}
@@ -103,7 +117,8 @@ export class CapabilitiesOverlay implements Component {
 			this.#plugins = plugins;
 			this.#loadError = undefined;
 			// A server the manager still reports as connecting gets the same 15 s deadline as one we started.
-			for (const row of mcp) if (row.state.kind === "connecting" && !this.#attempts.has(row.name)) this.#track(row.name);
+			for (const row of mcp)
+				if (row.state.kind === "connecting" && !this.#attempts.has(row.name)) this.#track(row.name);
 		} catch (error) {
 			this.#loadError = error instanceof Error ? error.message : String(error);
 		}
@@ -164,9 +179,14 @@ export class CapabilitiesOverlay implements Component {
 	}
 
 	handleInput(data: string): void {
-		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+		if (matchesKey(data, "ctrl+c") || (matchesKey(data, "escape") && !this.#import)) {
 			this.dispose();
 			this.#options.onClose();
+			return;
+		}
+		if (this.#import) {
+			this.#handleImportInput(data);
+			this.#options.requestRender();
 			return;
 		}
 		const tabIndex = TABS.indexOf(this.#tab);
@@ -183,13 +203,53 @@ export class CapabilitiesOverlay implements Component {
 		else if (data === "r" && this.#tab === "mcp") {
 			const row = this.#mcp?.[this.#selected.mcp];
 			if (row && row.state.kind !== "disabled") this.#connect(row.name);
-		} else if (data === "a" && this.#tab === "mcp") {
+		} else if (data === "i" && this.#tab === "mcp") this.#openImport();
+		else if (data === "a" && this.#tab === "mcp") {
 			this.dispose();
 			this.#options.onClose();
 			this.#source.addMcp();
 			return;
 		}
 		this.#options.requestRender();
+	}
+
+	#openImport(): void {
+		const preview: ImportPreview = { candidates: undefined, saving: false };
+		this.#import = preview;
+		this.#source.importCandidates().then(
+			candidates => {
+				if (this.#import !== preview || this.#disposed) return;
+				preview.candidates = candidates;
+				this.#options.requestRender();
+			},
+			error => {
+				if (this.#import === preview) this.#import = undefined;
+				this.#options.onError?.(error instanceof Error ? error.message : String(error));
+				this.#options.requestRender();
+			},
+		);
+	}
+
+	/** Esc cancels the preview without writing; Enter writes every listed server. */
+	#handleImportInput(data: string): void {
+		const preview = this.#import!;
+		if (matchesKey(data, "escape")) {
+			this.#import = undefined;
+			return;
+		}
+		if (!matchesKey(data, "enter") || preview.saving || !preview.candidates?.length) return;
+		preview.saving = true;
+		this.#source.importMcp(preview.candidates).then(
+			() => {
+				if (this.#import === preview) this.#import = undefined;
+				void this.#reload();
+			},
+			error => {
+				preview.saving = false;
+				this.#options.onError?.(error instanceof Error ? error.message : String(error));
+				this.#options.requestRender();
+			},
+		);
 	}
 
 	#toggle(): void {
@@ -209,7 +269,9 @@ export class CapabilitiesOverlay implements Component {
 		const row = (content: string) =>
 			`${edge("│")} ${content}${" ".repeat(Math.max(0, inner - visibleWidth(content)))} ${edge("│")}`;
 		const title = " capabilities ";
-		const lines = [`${edge("┌─")}${theme.fg("text", title)}${edge(`${"─".repeat(Math.max(0, boxWidth - 3 - title.length))}┐`)}`];
+		const lines = [
+			`${edge("┌─")}${theme.fg("text", title)}${edge(`${"─".repeat(Math.max(0, boxWidth - 3 - title.length))}┐`)}`,
+		];
 		const tabs = TABS.map((tab, index) => {
 			const label = `${index + 1} ${TAB_LABELS[tab]}`;
 			return tab === this.#tab ? theme.bold(theme.fg("accent", label)) : theme.fg("muted", label);
@@ -225,9 +287,10 @@ export class CapabilitiesOverlay implements Component {
 
 	#hints(): string {
 		const hint = (key: string, label: string) => `${theme.fg("accent", key)} ${theme.fg("muted", label)}`;
-		const keys =
-			this.#tab === "mcp"
-				? [hint("space", "enable/disable"), hint("r", "reconnect"), hint("a", "add"), hint("esc", "close")]
+		const keys = this.#import
+			? [hint("enter", "import all"), hint("esc", "cancel")]
+			: this.#tab === "mcp"
+				? [hint("space", "on/off"), hint("r", "reconnect"), hint("a", "add"), hint("i", "import")]
 				: this.#tab === "plugins"
 					? [hint("space", "enable/disable"), hint("1-3", "tabs"), hint("esc", "close")]
 					: [hint("↑↓", "select"), hint("1-3", "tabs"), hint("esc", "close")];
@@ -239,12 +302,51 @@ export class CapabilitiesOverlay implements Component {
 		return rows.slice(first, first + MAX_ROWS).map((value, offset) => [value, first + offset]);
 	}
 
+	#importBody(inner: number): string[] {
+		const { candidates, saving } = this.#import!;
+		if (!candidates) return [theme.fg("muted", "reading Claude, Cursor and VS Code MCP configs…")];
+		if (candidates.length === 0)
+			return [
+				theme.fg(
+					"muted",
+					cut(
+						"Nothing to import: no Claude, Cursor or VS Code MCP servers that GK does not already have. Esc goes back.",
+						inner,
+					),
+				),
+			];
+		const plural = candidates.length === 1 ? "" : "s";
+		const head = saving
+			? `importing ${candidates.length} server${plural}…`
+			: `Import ${candidates.length} server${plural} into GK, disabled until tested. Nothing is written until Enter.`;
+		const rows = candidates.slice(0, MAX_ROWS).map(candidate => {
+			const name = cut(candidate.name, 24).padEnd(24);
+			const from = cut(candidate.from, 14).padEnd(14);
+			return `  ${theme.fg("text", name)} ${theme.fg("muted", from)} ${theme.fg("dim", cut(candidate.detail, Math.max(0, inner - 2 - 24 - 1 - 14 - 1)))}`;
+		});
+		if (candidates.length > MAX_ROWS) rows.push(theme.fg("muted", `  … and ${candidates.length - MAX_ROWS} more`));
+		return [theme.fg("accent", cut(head, inner)), ...rows];
+	}
+
 	#body(inner: number): string[] {
-		if (this.#loadError) return [theme.fg("error", cut(`Could not read capabilities: ${this.#loadError}. Esc closes; reopen with /caps.`, inner))];
+		if (this.#loadError)
+			return [
+				theme.fg(
+					"error",
+					cut(`Could not read capabilities: ${this.#loadError}. Esc closes; reopen with /caps.`, inner),
+				),
+			];
 		const cursor = (selected: boolean) => (selected ? theme.fg("accent", "▸ ") : "  ");
+		if (this.#import) return this.#importBody(inner);
 		if (this.#tab === "mcp") {
 			if (!this.#mcp) return [theme.fg("muted", "loading MCP servers…")];
-			if (this.#mcp.length === 0) return [theme.fg("muted", "No MCP servers configured. Press a to add one (opens /mcp add).")];
+			if (this.#mcp.length === 0)
+				return [
+					theme.fg(
+						"muted",
+						cut("No MCP servers yet. Press a to add one or i to import from Claude/Cursor configs.", inner),
+					),
+				];
 			return this.#window(this.#mcp, this.#selected.mcp).map(([server, index]) => {
 				const selected = index === this.#selected.mcp;
 				const state = this.#mcpState(server);
@@ -255,7 +357,13 @@ export class CapabilitiesOverlay implements Component {
 			});
 		}
 		if (this.#tab === "skills") {
-			if (this.#skills.length === 0) return [theme.fg("muted", "No skills discovered. Add one under ~/.gk/agent/skills or search with /skills search.")];
+			if (this.#skills.length === 0)
+				return [
+					theme.fg(
+						"muted",
+						"No skills discovered. Add one under ~/.gk/agent/skills or search with /skills search.",
+					),
+				];
 			return this.#window(this.#skills, this.#selected.skills).map(([skill, index]) => {
 				const selected = index === this.#selected.skills;
 				const name = cut(skill.name, 28).padEnd(28);
@@ -266,7 +374,8 @@ export class CapabilitiesOverlay implements Component {
 			});
 		}
 		if (!this.#plugins) return [theme.fg("muted", "loading plugins…")];
-		if (this.#plugins.length === 0) return [theme.fg("muted", "No plugins installed. Browse with /marketplace discover.")];
+		if (this.#plugins.length === 0)
+			return [theme.fg("muted", "No plugins installed. Browse with /marketplace discover.")];
 		return this.#window(this.#plugins, this.#selected.plugins).map(([plugin, index]) => {
 			const selected = index === this.#selected.plugins;
 			const name = cut(plugin.name, 32).padEnd(32);
@@ -284,6 +393,8 @@ async function submit(ctx: InteractiveModeContext, text: string): Promise<void> 
 
 /** Live source over omp's MCP manager, session skills and plugin installer. */
 export function createCapabilitiesSource(ctx: InteractiveModeContext): CapabilitiesSource {
+	/** Configs behind the last import preview, so Enter writes exactly what was shown. */
+	const importable = new Map<string, MCPServerConfig>();
 	return {
 		async mcp() {
 			const manager = ctx.mcpManager;
@@ -299,7 +410,8 @@ export function createCapabilitiesSource(ctx: InteractiveModeContext): Capabilit
 				const status = manager!.getConnectionStatus(name);
 				const scope = manager!.getSource(name)?.level === "project" ? "project" : "global";
 				let state: McpRowState;
-				if (status === "connected") state = { kind: "connected", tools: manager!.getConnection(name)?.tools?.length ?? 0 };
+				if (status === "connected")
+					state = { kind: "connected", tools: manager!.getConnection(name)?.tools?.length ?? 0 };
 				else if (status === "connecting") state = { kind: "connecting" };
 				else if (manager!.getServerConfig(name)?.auth) state = { kind: "needs-login" };
 				else state = { kind: "failed", reason: "not connected" };
@@ -318,7 +430,8 @@ export function createCapabilitiesSource(ctx: InteractiveModeContext): Capabilit
 					}
 				}
 			}
-			for (const name of disabled) if (!seen.has(name)) rows.push({ name, scope: "global", state: { kind: "disabled" } });
+			for (const name of disabled)
+				if (!seen.has(name)) rows.push({ name, scope: "global", state: { kind: "disabled" } });
 			return rows.sort((a, b) => a.name.localeCompare(b.name));
 		},
 		skills() {
@@ -346,8 +459,38 @@ export function createCapabilitiesSource(ctx: InteractiveModeContext): Capabilit
 			ctx.editor.setText("/mcp add ");
 			ctx.ui.requestRender();
 		},
+		async importCandidates() {
+			const cwd = getProjectDir();
+			const [{ configs, sources }, user] = await Promise.all([
+				loadAllMCPConfigs(cwd, { filterExa: false }),
+				readMCPConfigFile(getMCPConfigPath("user", cwd)),
+			]);
+			importable.clear();
+			const candidates: McpImportCandidate[] = [];
+			for (const [name, config] of Object.entries(configs)) {
+				const source = sources[name];
+				if (!source || !IMPORT_PROVIDERS[source.provider] || user.mcpServers?.[name]) continue;
+				importable.set(name, config);
+				const detail =
+					config.type === "http" || config.type === "sse"
+						? config.url
+						: [config.command, ...(config.args ?? [])].join(" ");
+				candidates.push({ name, from: source.providerName, detail });
+			}
+			return candidates.sort((a, b) => a.name.localeCompare(b.name));
+		},
+		async importMcp(candidates) {
+			const path = getMCPConfigPath("user", getProjectDir());
+			for (const candidate of candidates) {
+				const config = importable.get(candidate.name);
+				if (config) await addMCPServer(path, candidate.name, { ...config, enabled: false });
+			}
+		},
 	};
 }
+
+/** Tools whose MCP configs `i` offers to import (spec §5.13). */
+const IMPORT_PROVIDERS: Readonly<Record<string, true>> = { claude: true, cursor: true, vscode: true };
 
 /** Open the Capabilities center (`/caps`, palette). */
 export function showCapabilities(ctx: InteractiveModeContext): void {
