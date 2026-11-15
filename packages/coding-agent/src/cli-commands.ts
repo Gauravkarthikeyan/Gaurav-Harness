@@ -343,24 +343,25 @@ export function isSubcommand(first: string | undefined): boolean {
 // The real commands live under `omp plugin <action>`; each entry maps a verb to
 // a hint pointing there. See {@link reservedTopLevelWordMessage} for when a hint
 // fires vs. when the argv still falls through to `launch`.
+// gk: debrand
 const RESERVED_TOP_LEVEL_WORDS: Record<string, string> = {
 	extensions:
-		'`omp extensions` is not a management command. Use `omp plugin list` / `omp plugin install`, or run `omp launch extensions` if you meant to send "extensions" as a prompt.',
-	list: '`omp list` is not a top-level command. Use `omp plugin list` to list installed plugins, or run `omp launch list` if you meant to send "list" as a prompt.',
+		'`gk extensions` is not a management command. Use `gk plugin list` / `gk plugin install`, or run `gk launch extensions` if you meant to send "extensions" as a prompt.',
+	list: '`gk list` is not a top-level command. Use `gk plugin list` to list installed plugins, or run `gk launch list` if you meant to send "list" as a prompt.',
 	remove:
-		'`omp remove` is not a top-level command. Use `omp plugin uninstall <name>` to remove a plugin, or run `omp launch remove` if you meant to send "remove" as a prompt.',
+		'`gk remove` is not a top-level command. Use `gk plugin uninstall <name>` to remove a plugin, or run `gk launch remove` if you meant to send "remove" as a prompt.',
 	uninstall:
-		'`omp uninstall` is not a top-level command. Use `omp plugin uninstall <name@marketplace>` to remove a plugin, or run `omp launch uninstall` if you meant to send "uninstall" as a prompt.',
+		'`gk uninstall` is not a top-level command. Use `gk plugin uninstall <name@marketplace>` to remove a plugin, or run `gk launch uninstall` if you meant to send "uninstall" as a prompt.',
 	marketplace:
-		'`omp marketplace` is not a top-level command. Use `omp plugin marketplace <add|remove|update|list>` to manage marketplaces, or run `omp launch marketplace` if you meant to send "marketplace" as a prompt.',
+		'`gk marketplace` is not a top-level command. Use `gk plugin marketplace <add|remove|update|list>` to manage marketplaces, or run `gk launch marketplace` if you meant to send "marketplace" as a prompt.',
 	discover:
-		'`omp discover` is not a top-level command. Use `omp plugin discover [marketplace]` to browse available plugins, or run `omp launch discover` if you meant to send "discover" as a prompt.',
+		'`gk discover` is not a top-level command. Use `gk plugin discover [marketplace]` to browse available plugins, or run `gk launch discover` if you meant to send "discover" as a prompt.',
 	upgrade:
-		'`omp upgrade` is not a top-level command. Use `omp plugin upgrade [name]` to upgrade plugins, or run `omp launch upgrade` if you meant to send "upgrade" as a prompt.',
+		'`gk upgrade` is not a top-level command. Use `gk plugin upgrade [name]` to upgrade plugins, or run `gk launch upgrade` if you meant to send "upgrade" as a prompt.',
 	enable:
-		'`omp enable` is not a top-level command. Use `omp plugin enable <name@marketplace>` to enable a plugin, or run `omp launch enable` if you meant to send "enable" as a prompt.',
+		'`gk enable` is not a top-level command. Use `gk plugin enable <name@marketplace>` to enable a plugin, or run `gk launch enable` if you meant to send "enable" as a prompt.',
 	disable:
-		'`omp disable` is not a top-level command. Use `omp plugin disable <name@marketplace>` to disable a plugin, or run `omp launch disable` if you meant to send "disable" as a prompt.',
+		'`gk disable` is not a top-level command. Use `gk plugin disable <name@marketplace>` to disable a plugin, or run `gk launch disable` if you meant to send "disable" as a prompt.',
 };
 
 // Sub-actions that make `omp marketplace <sub>` unambiguously a management

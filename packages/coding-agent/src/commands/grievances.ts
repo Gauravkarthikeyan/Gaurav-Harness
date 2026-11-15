@@ -28,13 +28,14 @@ export default class Grievances extends Command {
 		all: Flags.boolean({ description: "Delete every grievance (clean)", default: false }),
 	};
 
+	// gk: debrand
 	static examples = [
-		"omp grievances",
-		"omp grievances list --tool find",
-		"omp grievances clean --id 209",
-		"omp grievances clean --tool find",
-		"omp grievances clean --all",
-		"omp grievances push",
+		"gk grievances",
+		"gk grievances list --tool find",
+		"gk grievances clean --id 209",
+		"gk grievances clean --tool find",
+		"gk grievances clean --all",
+		"gk grievances push",
 	];
 
 	async run(): Promise<void> {

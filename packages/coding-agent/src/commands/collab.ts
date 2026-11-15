@@ -26,11 +26,12 @@ export default class Collab extends Command {
 		json: Flags.boolean({ char: "j", description: "Emit deterministic machine-readable JSON", default: false }),
 	};
 
+	// gk: debrand
 	static examples = [
-		"omp collab list",
-		"omp collab list --json",
-		"omp collab link <instanceId|pid>",
-		"omp collab link <pid> --view",
+		"gk collab list",
+		"gk collab list --json",
+		"gk collab link <instanceId|pid>",
+		"gk collab link <pid> --view",
 	];
 
 	async run(): Promise<void> {

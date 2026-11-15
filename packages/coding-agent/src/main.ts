@@ -20,7 +20,7 @@ import {
 	setProjectDir,
 	VERSION,
 } from "@oh-my-pi/pi-utils/dirs";
-import { $env, isBunTestRuntime, isCompiledBinary, setInteractiveHost } from "@oh-my-pi/pi-utils/env";
+import { $env, isBunTestRuntime, setInteractiveHost } from "@oh-my-pi/pi-utils/env"; // gk: isCompiledBinary only fed the disabled update check
 import * as logger from "@oh-my-pi/pi-utils/logger";
 import * as postmortem from "@oh-my-pi/pi-utils/postmortem";
 import { fuzzyFilter } from "@oh-my-pi/pi-tui/fuzzy";
@@ -41,11 +41,8 @@ import { processFileArguments } from "./cli/file-processor";
 import { buildInitialMessage } from "./cli/initial-message";
 import { formatKeyHint, KeybindingsManager } from "@oh-my-pi/pi-tui/app-keybindings";
 import type { SessionPickerOptions } from "@oh-my-pi/pi-tui/apps/session-picker";
-import { fetchBuild } from "./cli/build-service";
 import { applyStartupCwd } from "./cli/startup-cwd";
 import { runAutoUpdate } from "./cli/auto-update";
-import { managedInstallName } from "./cli/managed-install";
-import { getLatestRelease, isSourceCheckout } from "./cli/update-cli";
 import { findConfigFile } from "./config";
 import { cfgNoJudge, cfgNoSpotlight, cfgOffline } from "./config/auxiliary-model-policy";
 import { ModelRegistry } from "./config/model-registry";
@@ -187,7 +184,6 @@ import {
 	cfgTuiMaxFps,
 	cfgTuiMotion,
 	cfgUpdateAuto,
-	cfgUpdateChannel,
 } from "./modes/settings";
 import {
 	cfgDefaultThinkingLevel,
@@ -204,7 +200,7 @@ import { cfgDisabledProviders, cfgEnabledModels } from "./config/model-settings"
 import { cfgTaskAgentIdleTtlMs } from "./task/settings";
 import { cfgSkillsIncludeSkills } from "./extensibility/settings";
 import { cfgWorkspaceAdditionalDirectories } from "./session/context-settings";
-import { formatGkVersion } from "./gk/brand"; // gk: version string
+import { formatGkVersion, GK_VERSION } from "./gk/brand"; // gk: version string
 import { takeOmpImportNotice } from "./gk/import-omp"; // gk: first-run omp profile import notice
 
 type RunAcpMode = (createSession: AcpSessionFactory) => Promise<never>;
@@ -277,24 +273,9 @@ function writeStartupWarning(warning: string): void {
 	process.stderr.write(`${chalk.yellow(`Warning: ${warning}`)}\n`);
 }
 
-async function checkForNewVersion(currentVersion: string): Promise<string | undefined> {
-	if (!cfgStartupCheckUpdate.get(settings) && !cfgUpdateAuto.get(settings)) {
-		return;
-	}
-	try {
-		// Checkouts update through git and a manager (Tern) updates its omp itself:
-		// "run omp update" would be wrong advice for both.
-		if (isSourceCheckout() || (await managedInstallName(process.execPath))) return;
-		const channel = cfgUpdateChannel.get(settings);
-		// A compiled binary updates from the build service; naming the running
-		// version lets the service prepare the patch `omp update` will then use.
-		const { version } = isCompiledBinary()
-			? await fetchBuild({ channel }, { timeoutMs: 5_000, fromVersion: currentVersion })
-			: await getLatestRelease({ timeoutMs: 5_000, channel });
-		return Bun.semver.order(version, currentVersion) > 0 ? version : undefined;
-	} catch {
-		return undefined;
-	}
+// gk: self-update is disabled — upstream release checks would offer omp builds, so nothing is ever "newer".
+async function checkForNewVersion(_currentVersion: string): Promise<string | undefined> {
+	return undefined;
 }
 
 // Protocol hosts inherit OMP's neutral defaults for settings declaring `protocolDefault`
@@ -991,7 +972,7 @@ async function openRelocatedSession(
 		// Its directory is gone, so it cannot be resumed in place either.
 		throw new SessionResolutionError(
 			err.message,
-			"Close the session in the other omp process, then resume it again.",
+			"Close the session in the other GK Code process, then resume it again.", // gk: debrand
 		);
 	}
 }
@@ -1251,8 +1232,9 @@ export function normalizeContinueSessionArgs(parsed: Args, rawArgs?: readonly st
 	parsed.continue = false;
 	parsed.messages.splice(messageIndex, 1);
 }
+// gk: debrand
 const SESSION_NOT_FOUND_HINT =
-	"Run `omp --resume` without an argument to pick from recent sessions, or `omp` to start a new one.";
+	"Run `gk --resume` without an argument to pick from recent sessions, or `gk` to start a new one.";
 
 function validateSessionPersistenceArgs(parsed: Pick<Args, "continue" | "noSession" | "resume">): void {
 	if (!parsed.noSession) return;
@@ -1864,7 +1846,7 @@ export async function runRootCommand(
 		if (ompImportNotice) notifs.push(ompImportNotice);
 
 		if (parsedArgs.version) {
-			writeStartupNotice(parsedArgs, `${formatGkVersion(VERSION)}\n`); // gk: version string
+			writeStartupNotice(parsedArgs, `${formatGkVersion()}\n`); // gk: version string
 			process.exit(0);
 		}
 
@@ -2394,7 +2376,7 @@ export async function runRootCommand(
 		// read of a live store elsewhere in this process can corrupt it (issue #15586).
 		if (process.platform === "linux" && !ensureSqliteLockShim()) {
 			startupWarning(
-				"SQLite lock protection is unavailable with this Bun build: reading omp's own databases from inside omp (e.g. `grep -r ~/.omp`, `cp ~/.omp/agent/agent.db`) can corrupt them. Avoid it, and report this with your Bun version (#15586).",
+				"SQLite lock protection is unavailable with this Bun build: reading GK Code's own databases from inside GK Code (e.g. `grep -r ~/.gk`, `cp ~/.gk/agent/agent.db`) can corrupt them. Avoid it, and report this with your Bun version (#15586).", // gk: debrand
 			);
 		}
 		const buildStartupSessionOptions = async (manager: SessionManager | undefined) => {
@@ -2750,7 +2732,7 @@ export async function runRootCommand(
 			// runInteractiveMode calls it once init has painted. None feeds the first
 			// prompt: fallback-chain validation and the startup changelog only add header
 			// rows, and the background refresh already raced the first prompt when it ran earlier.
-			const startDeferredStartupWork = (interactive: InteractiveMode): void => {
+			const startDeferredStartupWork = (_interactive: InteractiveMode): void => { // gk: changelog no longer shown
 				if (showsStartupChangelog) {
 					void resolveStartupChangelogForDisplay({
 						mode: cfgStartupChangelogMode.get(settingsInstance),
@@ -2758,7 +2740,8 @@ export async function runRootCommand(
 						lastVersion: lastChangelogVersion,
 						changelogPath: getChangelogPath(),
 					})
-						.then(selection => selection && interactive.showStartupChangelog(selection))
+						// gk: the bundled changelog is omp's release history — advance the marker, never show it.
+						.then(() => undefined)
 						.catch(error => logger.warn("Startup changelog failed", { error: String(error) }));
 				}
 				void session.loadDeferredExtensions();
@@ -2897,7 +2880,7 @@ export async function runRootCommand(
 					logger.endTiming();
 					await runInteractiveMode(
 						session,
-						VERSION,
+						GK_VERSION, // gk: welcome shows GK Code's version, not the upstream one
 						notifs,
 						versionCheckPromise,
 						initialArgs.messages,

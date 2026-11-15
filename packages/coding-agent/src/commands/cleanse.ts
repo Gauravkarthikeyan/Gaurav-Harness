@@ -35,14 +35,15 @@ export default class Cleanse extends Command {
 		}),
 	};
 
+	// gk: debrand
 	static examples = [
-		"omp cleanse",
-		"omp cleanse --all",
-		'omp cleanse "ts errors"',
-		"omp cleanse -n 8",
-		"omp cleanse -m opus",
-		"omp cleanse -t",
-		"omp cleanse --agents 12 --model anthropic/claude-opus-4-6",
+		"gk cleanse",
+		"gk cleanse --all",
+		'gk cleanse "ts errors"',
+		"gk cleanse -n 8",
+		"gk cleanse -m opus",
+		"gk cleanse -t",
+		"gk cleanse --agents 12 --model anthropic/claude-opus-4-6",
 	];
 
 	async run(): Promise<void> {

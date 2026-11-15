@@ -1,7 +1,7 @@
 import type { CommandMetadata } from "@oh-my-pi/pi-utils/cli";
 
 export const acpHelp = {
-	description: "Run omp as an ACP (Agent Client Protocol) server over stdio",
+	description: "Run GK Code as an ACP (Agent Client Protocol) server over stdio", // gk: debrand
 } satisfies CommandMetadata;
 
 export const agentsHelp = { description: "Manage bundled task agents" } satisfies CommandMetadata;
@@ -16,7 +16,7 @@ export const authHelp = {
 } satisfies CommandMetadata;
 
 export const authBrokerHelp = {
-	description: "Manage the omp auth-broker (credential vault)",
+	description: "Manage the GK Code auth-broker (credential vault)", // gk: debrand
 } satisfies CommandMetadata;
 
 export const authGatewayHelp = {
@@ -43,7 +43,7 @@ export const collabHelp = {
 } satisfies CommandMetadata;
 
 export const clipHelp = {
-	description: "Upload a /record recording to live.omp.sh as a public clip and print its URL",
+	description: "Upload a /record recording as a public clip and print its URL", // gk: debrand
 } satisfies CommandMetadata;
 
 export const commitHelp = { description: "Generate a commit message and update changelogs" } satisfies CommandMetadata;
@@ -132,7 +132,7 @@ export const searchHelp = { description: "Test web search providers" } satisfies
 
 export const sessionHelp = {
 	description:
-		"Hand a session to another machine (pack, unpack, moved) or check which sessions a running omp owns (lease)",
+		"Hand a session to another machine (pack, unpack, moved) or check which sessions a running GK Code owns (lease)", // gk: debrand
 } satisfies CommandMetadata;
 
 export const shareHelp = {
@@ -166,7 +166,7 @@ export function nativeShellHelp(name: keyof typeof NATIVE_SHELL_DESCRIPTIONS) {
 }
 
 export const skillHelp = {
-	description: "Install, search, publish, and manage skills on the Skillshare registry (skills.omp.sh)",
+	description: "Install, search, publish, and manage skills on the Skillshare registry", // gk: debrand
 } satisfies CommandMetadata;
 
 export const sshHelp = { description: "Manage SSH host configurations" } satisfies CommandMetadata;
@@ -174,7 +174,7 @@ export const sshHelp = { description: "Manage SSH host configurations" } satisfi
 export const statsHelp = { description: "View usage statistics" } satisfies CommandMetadata;
 
 export const streamHelp = {
-	description: "Broadcast local omp session screens and chat to your public live channel",
+	description: "Broadcast local GK Code session screens and chat to your public live channel", // gk: debrand
 } satisfies CommandMetadata;
 
 export const tinyModelsHelp = {

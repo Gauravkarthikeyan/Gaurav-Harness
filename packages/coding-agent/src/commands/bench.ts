@@ -39,7 +39,7 @@ export default class Bench extends Command {
 			options: SERVICE_TIER_OPENAI_VALUES,
 		}),
 		account: Flags.integer({
-			description: "Select the Nth OAuth account (1-based, as listed by omp token PROVIDER --list)",
+			description: "Select the Nth OAuth account (1-based, as listed by gk token PROVIDER --list)", // gk: debrand
 		}),
 		json: Flags.boolean({ description: "Output JSON" }),
 		par: Flags.integer({
@@ -56,16 +56,17 @@ export default class Bench extends Command {
 		}),
 	};
 
+	// gk: debrand
 	static examples = [
-		"# Compare TTFT and tok/s of two models\n  omp bench anthropic/claude-opus-4-5 openai/gpt-5.2",
-		"# Fuzzy selectors work\n  omp bench opus sonnet",
-		"# Average over 3 runs each\n  omp bench opus gpt-5.2 --runs 3",
-		"# Rotate chat, prefill, and generation challenges in one run\n  omp bench opus sonnet --profile mix",
-		"# Isolate prompt-ingestion speed with a 64 KiB cache-busted input\n  omp bench opus sonnet --profile prefill --prefill-bytes 65536",
-		"# Isolate sustained decode throughput\n  omp bench opus sonnet --profile generation",
-		"# Compare single-user vs 8 concurrent users, plus prefill speed\n  omp bench apple --detailed --par 8",
-		"# Force priority serving tier\n  omp bench openai-codex/gpt-5.5:low --runs 10 --service-tier priority",
-		"# Measure one cold/warm prompt-cache pair\n  omp bench openai/gpt-5.6 --cache --json",
+		"# Compare TTFT and tok/s of two models\n  gk bench anthropic/claude-opus-4-5 openai/gpt-5.2",
+		"# Fuzzy selectors work\n  gk bench opus sonnet",
+		"# Average over 3 runs each\n  gk bench opus gpt-5.2 --runs 3",
+		"# Rotate chat, prefill, and generation challenges in one run\n  gk bench opus sonnet --profile mix",
+		"# Isolate prompt-ingestion speed with a 64 KiB cache-busted input\n  gk bench opus sonnet --profile prefill --prefill-bytes 65536",
+		"# Isolate sustained decode throughput\n  gk bench opus sonnet --profile generation",
+		"# Compare single-user vs 8 concurrent users, plus prefill speed\n  gk bench apple --detailed --par 8",
+		"# Force priority serving tier\n  gk bench openai-codex/gpt-5.5:low --runs 10 --service-tier priority",
+		"# Measure one cold/warm prompt-cache pair\n  gk bench openai/gpt-5.6 --cache --json",
 	];
 
 	async run(): Promise<void> {

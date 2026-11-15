@@ -21,13 +21,14 @@ export default class Images extends Command {
 		dir: Flags.string({ description: "Project directory (default: current directory)" }),
 		timeout: Flags.integer({ description: "External health probe timeout in seconds" }),
 	};
+	// gk: debrand
 	static examples = [
-		"omp images",
-		"omp images status --json",
-		"omp images doctor",
-		"omp images probe --timeout 15",
-		"omp images purge",
-		"omp images purge --all --apply",
+		"gk images",
+		"gk images status --json",
+		"gk images doctor",
+		"gk images probe --timeout 15",
+		"gk images purge",
+		"gk images purge --all --apply",
 	];
 
 	async run(): Promise<void> {

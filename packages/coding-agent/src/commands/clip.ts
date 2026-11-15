@@ -23,10 +23,11 @@ export default class Clip extends Command {
 		server: Flags.string({ description: "Stream server base URL (overrides stream.serverUrl)" }),
 	};
 
+	// gk: debrand
 	static examples = [
-		"omp clip",
-		'omp clip -t "Streaming the lexer" -d "Rewrote the tokenizer live"',
-		"omp clip /tmp/omp-recordings/2026-09-22T10-00-00-1a2b3c4d.ompcast",
+		"gk clip",
+		'gk clip -t "Streaming the lexer" -d "Rewrote the tokenizer live"',
+		"gk clip /tmp/gk-recordings/2026-09-22T10-00-00-1a2b3c4d.ompcast",
 	];
 
 	async run(): Promise<void> {

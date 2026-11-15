@@ -17,10 +17,11 @@ export default class Stream extends Command {
 		"no-tui": Flags.boolean({ description: "Use the line-oriented console instead of the interactive TUI" }),
 	};
 
+	// gk: debrand
 	static examples = [
-		"omp stream",
-		'omp stream --title "Building a parser"',
-		"omp stream --server https://live.example.com",
+		"gk stream",
+		'gk stream --title "Building a parser"',
+		"gk stream --server https://live.example.com",
 	];
 
 	async run(): Promise<void> {

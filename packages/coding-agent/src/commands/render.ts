@@ -24,11 +24,12 @@ export default class Render extends Command {
 		quiet: Flags.boolean({ char: "q", description: "Suppress transcript output (benchmark runs)", default: false }),
 	};
 
+	// gk: debrand
 	static examples = [
-		"omp render",
-		"omp render 01a0285c --plain",
-		"omp render ~/.omp/agent/sessions/--work-pi--/big.jsonl -q -t --repaint 5",
-		"omp render -w 200 > thread.ansi",
+		"gk render",
+		"gk render 01a0285c --plain",
+		"gk render ~/.gk/agent/sessions/--work-pi--/big.jsonl -q -t --repaint 5",
+		"gk render -w 200 > thread.ansi",
 	];
 
 	async run(): Promise<void> {

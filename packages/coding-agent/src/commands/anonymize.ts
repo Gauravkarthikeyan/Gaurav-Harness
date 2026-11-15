@@ -15,10 +15,11 @@ export default class Anonymize extends Command {
 		out: Flags.string({ char: "o", description: "Output directory (default: ./<session-file>.anon)" }),
 	};
 
+	// gk: debrand
 	static examples = [
-		"omp anonymize",
-		"omp anonymize 01a0285c -o ./bug-report",
-		"omp anonymize ~/.omp/agent/sessions/--work-pi--/session.jsonl",
+		"gk anonymize",
+		"gk anonymize 01a0285c -o ./bug-report",
+		"gk anonymize ~/.gk/agent/sessions/--work-pi--/session.jsonl",
 	];
 
 	async run(): Promise<void> {

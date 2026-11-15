@@ -5,12 +5,12 @@ import { runPredictCompare } from "../cli/predict-cli";
 export default class Predict extends Command {
 	static description = commandHelp.description;
 
-	static examples = ["omp predict"];
+	static examples = ["gk predict"]; // gk: debrand
 
 	async run(): Promise<void> {
 		await this.parse(Predict);
 		if (!process.stdin.isTTY || !process.stdout.isTTY)
-			throw new CliUsageError("omp predict needs an interactive terminal");
+			throw new CliUsageError("gk predict needs an interactive terminal"); // gk: debrand
 		await runPredictCompare();
 	}
 }

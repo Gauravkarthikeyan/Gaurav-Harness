@@ -24,7 +24,7 @@ export default class Skill extends Command {
 		yes: Flags.boolean({ char: "y", description: "Install or update skills that ship scripts without asking" }),
 		json: Flags.boolean({ description: "Output JSON (search, info, token, list)" }),
 		sort: Flags.string({ description: "Search order", options: ["relevance", "downloads", "recent"] }),
-		scope: Flags.string({ description: "Publishing scope (default: your Stencil username)" }),
+		scope: Flags.string({ description: "Publishing scope (default: your cloud account username)" }), // gk: debrand
 		tag: Flags.string({ description: "Dist-tag for the published version" }),
 		"dry-run": Flags.boolean({ description: "Pack and validate without publishing" }),
 		"allow-secrets": Flags.boolean({ description: "Publish even when credential-shaped strings are found" }),
@@ -34,15 +34,16 @@ export default class Skill extends Command {
 		expires: Flags.integer({ description: "Token lifetime in days" }),
 	};
 
+	// gk: debrand
 	static examples = [
-		"omp skill install @alice/pdf-tools",
-		"omp skill install -g @alice/pdf-tools@^1.2",
-		'omp skill search "pdf" --sort downloads',
-		"omp skill version minor && omp skill publish",
-		"omp skill publish ./skills/pdf-tools --dry-run",
-		"omp skill tag @alice/pdf-tools@2.0.0-beta.1 next",
-		'omp skill deprecate @alice/pdf-tools@"<1.0.0" "use 1.x"',
-		"omp skill token create ci --package @alice/pdf-tools --expires 90",
+		"gk skill install @alice/pdf-tools",
+		"gk skill install -g @alice/pdf-tools@^1.2",
+		'gk skill search "pdf" --sort downloads',
+		"gk skill version minor && gk skill publish",
+		"gk skill publish ./skills/pdf-tools --dry-run",
+		"gk skill tag @alice/pdf-tools@2.0.0-beta.1 next",
+		'gk skill deprecate @alice/pdf-tools@"<1.0.0" "use 1.x"',
+		"gk skill token create ci --package @alice/pdf-tools --expires 90",
 	];
 
 	async run(): Promise<void> {

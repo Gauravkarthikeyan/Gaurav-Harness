@@ -75,12 +75,13 @@ export default class Token extends Command {
 		}),
 	};
 
+	// gk: debrand
 	static examples = [
-		"# Get API key for Anthropic\n  omp token anthropic",
-		"# Get raw Copilot credential JSON\n  omp token github-copilot --raw",
-		"# Force refresh and get Gemini CLI token\n  omp token google-gemini-cli --force-refresh",
-		"# List Anthropic OAuth accounts\n  omp token anthropic --list",
-		"# Get the 2nd Anthropic OAuth account's token\n  omp token anthropic --account 2",
+		"# Get API key for Anthropic\n  gk token anthropic",
+		"# Get raw Copilot credential JSON\n  gk token github-copilot --raw",
+		"# Force refresh and get Gemini CLI token\n  gk token google-gemini-cli --force-refresh",
+		"# List Anthropic OAuth accounts\n  gk token anthropic --list",
+		"# Get the 2nd Anthropic OAuth account's token\n  gk token anthropic --account 2",
 	];
 
 	async run(): Promise<void> {

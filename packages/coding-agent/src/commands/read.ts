@@ -17,15 +17,16 @@ export default class Read extends Command {
 		}),
 	};
 
+	// gk: debrand
 	static examples = [
-		"omp read src/foo.ts",
-		"omp read src/foo.ts:50-100",
-		"omp read src/foo.ts:raw",
-		"omp read https://example.com",
-		"omp read omp://",
-		"omp read issue://123",
-		"omp read path/to/archive.zip:dir/file.ts",
-		"omp read path/to/db.sqlite:users:42",
+		"gk read src/foo.ts",
+		"gk read src/foo.ts:50-100",
+		"gk read src/foo.ts:raw",
+		"gk read https://example.com",
+		"gk read gk://",
+		"gk read issue://123",
+		"gk read path/to/archive.zip:dir/file.ts",
+		"gk read path/to/db.sqlite:users:42",
 	];
 
 	async run(): Promise<void> {

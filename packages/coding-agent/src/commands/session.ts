@@ -26,11 +26,12 @@ import {
 const ACTIONS = ["pack", "unpack", "moved", "lease"] as const;
 type SessionAction = (typeof ACTIONS)[number];
 
+// gk: debrand
 const USAGE: Record<SessionAction, string> = {
-	pack: "omp session pack <session> <out.tar>",
-	unpack: "omp session unpack <archive.tar> --cwd <dir>",
-	moved: "omp session moved <session> --to <label>",
-	lease: "omp session lease [--json] -- <session-id>...",
+	pack: "gk session pack <session> <out.tar>",
+	unpack: "gk session unpack <archive.tar> --cwd <dir>",
+	moved: "gk session moved <session> --to <label>",
+	lease: "gk session lease [--json] -- <session-id>...",
 };
 
 const UNPACK_NOTE: Record<UnpackMode, string> = {
@@ -83,11 +84,12 @@ export default class Session extends Command {
 		json: Flags.boolean({ description: "Print {held, unknown} session id lists as JSON (lease)" }),
 	};
 
+	// gk: debrand
 	static examples = [
-		"# Pack a session with its artifacts and image blobs\n  omp session pack ~/.omp/agent/sessions/<project>/<file>.jsonl /tmp/session.tar",
-		"# Unpack it on another machine; prints the session file path\n  omp session unpack /tmp/session.tar --cwd ~/src/project",
-		"# Mark the local copy stale; resuming it later forks it\n  omp session moved <file>.jsonl --to cloud",
-		"# List which of these sessions a running omp owns, without taking ownership (`--` keeps ids starting with `-` from parsing as options)\n  omp session lease --json -- <id> <id>",
+		"# Pack a session with its artifacts and image blobs\n  gk session pack ~/.gk/agent/sessions/<project>/<file>.jsonl /tmp/session.tar",
+		"# Unpack it on another machine; prints the session file path\n  gk session unpack /tmp/session.tar --cwd ~/src/project",
+		"# Mark the local copy stale; resuming it later forks it\n  gk session moved <file>.jsonl --to cloud",
+		"# List which of these sessions a running GK Code owns, without taking ownership (`--` keeps ids starting with `-` from parsing as options)\n  gk session lease --json -- <id> <id>",
 	];
 
 	async run(): Promise<void> {

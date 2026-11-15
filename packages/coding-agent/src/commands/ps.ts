@@ -36,13 +36,14 @@ export default class Ps extends Command {
 		timeout: Flags.integer({ description: "Grace period in seconds before hard kill (stop)" }),
 	};
 
+	// gk: debrand
 	static examples = [
-		"omp ps",
-		"omp ps --all",
-		"omp ps logs web --follow",
-		"omp ps stop web",
-		"omp ps kill web",
-		"omp ps info relay --global browser-relay",
+		"gk ps",
+		"gk ps --all",
+		"gk ps logs web --follow",
+		"gk ps stop web",
+		"gk ps kill web",
+		"gk ps info relay --global browser-relay",
 	];
 
 	async run(): Promise<void> {

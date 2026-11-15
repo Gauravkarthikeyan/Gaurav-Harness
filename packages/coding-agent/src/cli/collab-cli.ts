@@ -83,7 +83,7 @@ export async function runCollabListCommand(
 		print(`${host.instanceId}  ${session}  ${chalk.dim(cwd)}`);
 		print(`  ${chalk.dim(details.join(" · "))}`);
 	}
-	print(chalk.dim("Get a link: omp collab link <instanceId|pid> [--view]"));
+	print(chalk.dim("Get a link: gk collab link <instanceId|pid> [--view]")); // gk: debrand
 }
 
 export async function runCollabLinkCommand(

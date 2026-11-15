@@ -104,10 +104,11 @@ export function parseAuthExport(text: string, source = "credential file"): AuthE
 	} catch {
 		throw new AuthTransferError(`${source} is not valid JSON.`);
 	}
-	if (!isRecord(value)) throw new AuthTransferError(`${source} is not an \`omp auth export\` document.`);
+	// gk: debrand
+	if (!isRecord(value)) throw new AuthTransferError(`${source} is not a \`gk auth export\` document.`);
 	if (value.version !== AUTH_EXPORT_VERSION) {
 		throw new AuthTransferError(
-			`${source} has export version ${JSON.stringify(value.version)}; this omp reads version ${AUTH_EXPORT_VERSION}.`,
+			`${source} has export version ${JSON.stringify(value.version)}; this GK Code reads version ${AUTH_EXPORT_VERSION}.`, // gk: debrand
 		);
 	}
 	if (!Array.isArray(value.credentials)) throw new AuthTransferError(`${source} has no credentials array.`);
@@ -174,35 +175,37 @@ export default class Auth extends Command {
 			options: ["export", "import"],
 		}),
 		file: Args.string({
-			description: "File written by `omp auth export`, or - for stdin (import)",
+			description: "File written by `gk auth export`, or - for stdin (import)", // gk: debrand
 			required: false,
 		}),
 	};
 
+	// gk: debrand
 	static examples = [
-		"# Write every stored credential to a file (keep it secret)\n  omp auth export > credentials.json",
-		"# Merge them into this machine's credential store\n  omp auth import credentials.json",
-		"# Copy credentials to another machine over SSH\n  omp auth export | ssh host omp auth import -",
+		"# Write every stored credential to a file (keep it secret)\n  gk auth export > credentials.json",
+		"# Merge them into this machine's credential store\n  gk auth import credentials.json",
+		"# Copy credentials to another machine over SSH\n  gk auth export | ssh host gk auth import -",
 	];
 
 	async run(): Promise<void> {
 		const { args, argv } = await this.parse(Auth);
 		const action = args.action;
 		if (action === "export" && argv.length > 1) {
-			throw new CliUsageError(`Unexpected argument "${argv[1]}". Usage: omp auth export`);
+			throw new CliUsageError(`Unexpected argument "${argv[1]}". Usage: gk auth export`); // gk: debrand
 		}
 		if (action === "import" && !args.file) {
-			throw new CliUsageError("Missing credential file. Usage: omp auth import <file|->");
+			throw new CliUsageError("Missing credential file. Usage: gk auth import <file|->"); // gk: debrand
 		}
 		if (action === "import" && argv.length > 2) {
-			throw new CliUsageError(`Unexpected argument "${argv[2]}". Usage: omp auth import <file|->`);
+			throw new CliUsageError(`Unexpected argument "${argv[2]}". Usage: gk auth import <file|->`); // gk: debrand
 		}
 
 		const broker = await resolveAuthBrokerConfig();
 		if (broker) {
+			// gk: debrand
 			process.stderr.write(
-				`${chalk.red(`error: omp uses the auth broker at ${broker.url}; credentials live there, not in this machine's agent.db.`)}\n` +
-					"Run this on the broker host, or disable the broker (`omp config reset auth.broker.url`) first.\n",
+				`${chalk.red(`error: GK Code uses the auth broker at ${broker.url}; credentials live there, not in this machine's agent.db.`)}\n` +
+					"Run this on the broker host, or disable the broker (`gk config reset auth.broker.url`) first.\n",
 			);
 			process.exitCode = 1;
 			return;

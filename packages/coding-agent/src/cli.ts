@@ -24,7 +24,6 @@ import {
 	MIN_BUN_VERSION,
 	resolveProfileEnv,
 	setProfile,
-	VERSION,
 } from "@oh-my-pi/pi-utils/dirs";
 
 import { declareWorkerHostEntry, installWorkerInbox, isWorkerHostSelector } from "@oh-my-pi/pi-utils/worker-host";
@@ -48,7 +47,7 @@ import {
 import type * as JsProcessEntry from "./eval/js/process-entry";
 import type { WorkerInbound as JsWorkerInbound, WorkerOutbound as JsWorkerOutbound } from "./eval/js/worker-protocol";
 import { startParentWatchdog } from "./subprocess/parent-watchdog";
-import { formatGkVersion } from "./gk/brand"; // gk: version string
+import { formatGkVersion, GK_VERSION } from "./gk/brand"; // gk: version string
 import { offerOmpProfileImport } from "./gk/import-omp"; // gk: first-run omp profile import
 
 if (Bun.semver.order(Bun.version, MIN_BUN_VERSION) < 0) {
@@ -557,9 +556,9 @@ export async function runCli(argv: string[]): Promise<void> {
 		process.stdout.write(formatLicenseOutput());
 		return;
 	}
-	// gk: `gk-code <version> (omp <upstream>)` instead of run()'s `<bin>/<version>`.
+	// gk: `gk-code <version>` instead of run()'s `<bin>/<version>`.
 	if (resolvedArgv[0] === "--version" || resolvedArgv[0] === "-v") {
-		process.stdout.write(`${formatGkVersion(VERSION)}\n`);
+		process.stdout.write(`${formatGkVersion()}\n`);
 		return;
 	}
 	const helpOrVersion =
@@ -596,7 +595,7 @@ export async function runCli(argv: string[]): Promise<void> {
 		// keeps the TUI graph out of worker, subcommand, help, and version launches.
 		// Loading it statically would erase the measured cold-start improvement.
 		const { beginStartupComposer, stopPendingStartupComposer } = await import("./modes/startup-composer");
-		beginStartupComposer({ version: VERSION });
+		beginStartupComposer({ version: GK_VERSION }); // gk: show GK Code's version, not the upstream one
 		stopStartupComposer = stopPendingStartupComposer;
 	}
 
@@ -624,7 +623,7 @@ export async function runCli(argv: string[]): Promise<void> {
 			return;
 		}
 		runningCommand = resolved.argv[0];
-		await run({ bin: APP_NAME, version: VERSION, argv: resolved.argv, commands, metadataHelp: showHelp });
+		await run({ bin: APP_NAME, version: GK_VERSION, argv: resolved.argv, commands, metadataHelp: showHelp }); // gk: GK Code version
 	} finally {
 		stopStartupComposer?.();
 	}

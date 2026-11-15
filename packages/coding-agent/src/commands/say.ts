@@ -39,10 +39,11 @@ export default class Say extends Command {
 		out: Flags.string({ char: "o", description: "Write WAV to this path instead of playing" }),
 	};
 
+	// gk: debrand
 	static examples = [
-		'omp say "hello world"',
-		"omp say --file notes.md --voice bm_fable --speed 1.25",
-		'omp say "hello world" --out /tmp/hello.wav',
+		'gk say "hello world"',
+		"gk say --file notes.md --voice bm_fable --speed 1.25",
+		'gk say "hello world" --out /tmp/hello.wav',
 	];
 
 	async run(): Promise<void> {
@@ -160,7 +161,7 @@ export default class Say extends Command {
 	#synthesisFailed(model: string): void {
 		process.stderr.write(
 			chalk.red(
-				`error: could not synthesize with local TTS model "${model}". Run \`omp setup speech\` to install it.\n`,
+				`error: could not synthesize with local TTS model "${model}". Run \`gk setup speech\` to install it.\n`, // gk: debrand
 			),
 		);
 	}

@@ -70,10 +70,11 @@ export default class Toks extends Command {
 		json: Flags.boolean({ description: "Output JSON" }),
 	};
 
+	// gk: debrand
 	static examples = [
-		"omp toks README.md",
-		'omp toks "The quick brown fox jumps over the lazy dog"',
-		"omp toks src/main.ts --json",
+		"gk toks README.md",
+		'gk toks "The quick brown fox jumps over the lazy dog"',
+		"gk toks src/main.ts --json",
 	];
 
 	async run(): Promise<void> {

@@ -38,17 +38,17 @@ export async function runBrowserRelayCommand(args: BrowserRelayCommandArgs): Pro
 async function runInstall(dirOverride: string | undefined): Promise<void> {
 	const dir = dirOverride ? path.resolve(dirOverride) : defaultRelayExtensionDir();
 	await writeRelayExtension(dir, VERSION);
-	console.log(`Installed the OMP Browser Relay extension to ${dir}`);
+	console.log(`Installed the browser relay extension to ${dir}`); // gk: debrand
 	console.log("");
 	console.log("Finish setup in Chrome:");
 	console.log("  1. Open chrome://extensions and enable Developer mode.");
 	console.log(`  2. Click "Load unpacked" and select: ${dir}`);
-	console.log("  3. Enable the mode:  omp config set browser.relay true");
+	console.log("  3. Enable the mode:  gk config set browser.relay true"); // gk: debrand
 	console.log("");
-	console.log("omp starts the relay automatically when the browser prelude needs it;");
-	console.log("run `omp browser-relay` yourself only for --token or --no-group.");
+	console.log("GK Code starts the relay automatically when the browser prelude needs it;"); // gk: debrand
+	console.log("run `gk browser-relay` yourself only for --token or --no-group."); // gk: debrand
 	console.log("The extension badge shows 'on' once it reaches a relay.");
-	if (!dirOverride) console.log("Newer omp versions update the extension in this folder and reload it on their own.");
+	if (!dirOverride) console.log("Newer GK Code versions update the extension in this folder and reload it on their own."); // gk: debrand
 	console.log(
 		"Old connection-refused entries in chrome://extensions > Errors may persist after reconnect; use Clear all.",
 	);
@@ -68,31 +68,31 @@ async function runServe(args: BrowserRelayCommandArgs): Promise<void> {
 		// broker (or by hand): losing the bind to a live relay is success.
 		if (err instanceof Error && "code" in err && err.code === "EADDRINUSE") {
 			if (await probeRelayServer(`http://127.0.0.1:${args.port}`)) {
-				console.log(`omp browser relay already running on http://127.0.0.1:${args.port}; nothing to do.`);
+				console.log(`GK Code browser relay already running on http://127.0.0.1:${args.port}; nothing to do.`); // gk: debrand
 				return;
 			}
-			console.error(`Port ${args.port} is in use by something that is not an omp browser relay.`);
+			console.error(`Port ${args.port} is in use by something that is not a GK Code browser relay.`); // gk: debrand
 			process.exit(1);
 		}
 		throw err;
 	}
 
-	console.log(`omp browser relay listening on http://127.0.0.1:${args.port}`);
+	console.log(`GK Code browser relay listening on http://127.0.0.1:${args.port}`); // gk: debrand
 	console.log(`  extension endpoint  ws://127.0.0.1:${args.port}/ext${args.token ? "?token=***" : ""}`);
 	if (args.port === DEFAULT_RELAY_PORT) {
-		console.log("  enable with         omp config set browser.relay true");
+		console.log("  enable with         gk config set browser.relay true"); // gk: debrand
 	} else {
 		console.log(
-			`  enable with         omp config set browser.relay true && omp config set browser.relayUrl http://127.0.0.1:${args.port}`,
+			`  enable with         gk config set browser.relay true && gk config set browser.relayUrl http://127.0.0.1:${args.port}`, // gk: debrand
 		);
 	}
-	console.log("Waiting for the OMP Browser Relay extension to connect (omp browser-relay install)...");
+	console.log("Waiting for the browser relay extension to connect (gk browser-relay install)..."); // gk: debrand
 
 	let announced = false;
 	const readiness = setInterval(() => {
 		if (relay.bridge.ready && !announced) {
 			announced = true;
-			console.log("Extension connected. The omp browser prelude can now drive your tabs.");
+			console.log("Extension connected. The GK Code browser prelude can now drive your tabs."); // gk: debrand
 		} else if (!relay.bridge.ready && announced) {
 			announced = false;
 			console.log("Extension disconnected; waiting for it to reconnect...");

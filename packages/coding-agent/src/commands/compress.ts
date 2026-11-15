@@ -17,12 +17,13 @@ export default class Compress extends Command {
 		model: Flags.string({ char: "m", description: "Model selector" }),
 	};
 
+	// gk: debrand
 	static examples = [
-		"omp compress prompts/tools/read.md",
-		"omp compress notes.md -o notes.compressed.md",
-		"omp compress 'src/prompts/**/*.md' -i",
-		"omp compress a.md b.md c.md -i -n 8",
-		"omp compress spec.md -r 5 -m opus",
+		"gk compress prompts/tools/read.md",
+		"gk compress notes.md -o notes.compressed.md",
+		"gk compress 'src/prompts/**/*.md' -i",
+		"gk compress a.md b.md c.md -i -n 8",
+		"gk compress spec.md -r 5 -m opus",
 	];
 
 	async run(): Promise<void> {

@@ -15,7 +15,7 @@ export default class Usage extends Command {
 			options: ["invalidate", "clients", "accounts", "reset"],
 		}),
 		target: Args.string({
-			description: "Saved reset to spend with `reset`: <provider>/<credential id> as `omp usage reset` lists it",
+			description: "Saved reset to spend with `reset`: <provider>/<credential id> as `gk usage reset` lists it", // gk: debrand
 			required: false,
 		}),
 	};
@@ -43,18 +43,19 @@ export default class Usage extends Command {
 		}),
 	};
 
+	// gk: debrand
 	static examples = [
-		"# Detailed per-account usage breakdown across all providers\n  omp usage",
-		"# Only Anthropic accounts\n  omp usage --provider anthropic",
-		"# Redact account identifiers for screenshots\n  omp usage --redact",
-		"# Machine-readable output\n  omp usage --json",
-		"# Usage-limit trend over the last 30 days\n  omp usage --history --days 30",
-		"# Per-client token burn (which machine/app spent what) over the last 30 days\n  omp usage clients --days 30",
-		"# OAuth identity keys for task.agentAccountPools (no tokens)\n  omp usage accounts",
-		"# Saved Codex and Claude rate-limit resets per account, with each account's credential id\n  omp usage reset",
-		"# Spend one saved reset on a listed account\n  omp usage reset codex/3",
-		"# Invalidate cached usage reports for all providers\n  omp usage invalidate",
-		"# Invalidate cached usage reports for a specific provider\n  omp usage invalidate --provider anthropic",
+		"# Detailed per-account usage breakdown across all providers\n  gk usage",
+		"# Only Anthropic accounts\n  gk usage --provider anthropic",
+		"# Redact account identifiers for screenshots\n  gk usage --redact",
+		"# Machine-readable output\n  gk usage --json",
+		"# Usage-limit trend over the last 30 days\n  gk usage --history --days 30",
+		"# Per-client token burn (which machine/app spent what) over the last 30 days\n  gk usage clients --days 30",
+		"# OAuth identity keys for task.agentAccountPools (no tokens)\n  gk usage accounts",
+		"# Saved Codex and Claude rate-limit resets per account, with each account's credential id\n  gk usage reset",
+		"# Spend one saved reset on a listed account\n  gk usage reset codex/3",
+		"# Invalidate cached usage reports for all providers\n  gk usage invalidate",
+		"# Invalidate cached usage reports for a specific provider\n  gk usage invalidate --provider anthropic",
 	];
 
 	async run(): Promise<void> {
