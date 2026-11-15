@@ -27,3 +27,14 @@ export const cfgGkLastLaunchMode = register({
 	values: LAUNCH_MODES,
 	default: "solo",
 });
+
+/** Daily spend budget in USD across all sessions; the Stage's TODAY field warns once it is reached. Unset = none. */
+export const cfgGkBudgetDailyUsd = register({
+	id: "gk.budget.dailyUsd",
+	type: "number",
+	default: undefined,
+	validate: raw => {
+		if (raw === undefined || raw === null || (typeof raw === "number" && Number.isFinite(raw) && raw > 0)) return;
+		throw new Error(`Invalid gk.budget.dailyUsd: expected a positive USD amount, got ${Bun.inspect(raw)}.`);
+	},
+});
