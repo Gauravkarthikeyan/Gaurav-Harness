@@ -1134,6 +1134,11 @@ export class ToolExecutionComponent extends Container {
 		return taskCardAgentIds(this.#result?.details);
 	}
 
+	/** gk: the tool call this card shows, for the Stage's one-line transcript. */
+	get gkToolCallIds(): readonly string[] {
+		return this.#toolCallId ? [this.#toolCallId] : [];
+	}
+
 	getTranscriptBlockVersion(): number {
 		return this.#blockVersion;
 	}

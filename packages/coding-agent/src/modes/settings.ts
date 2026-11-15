@@ -783,6 +783,19 @@ export const cfgDisplayHideToolActivity = register({
 	},
 });
 
+// gk: the Stage — full-screen tiled surface on a TTY; off = omp's inline transcript.
+export const cfgGkStageEnabled = register({
+	id: "gk.stage.enabled",
+	type: "boolean",
+	default: true,
+	ui: {
+		tab: "appearance",
+		group: "Display",
+		label: "Stage",
+		description: "Full-screen tiled Stage (panes for commands, agents, diffs and widgets); applies on next start",
+	},
+});
+
 export const cfgDisplayShowTokenUsage = register({
 	id: "display.showTokenUsage",
 	type: "boolean",
@@ -1260,13 +1273,13 @@ export const cfgStartupQuiet = register({
 export const cfgStartupShowSplash = register({
 	id: "startup.showSplash",
 	type: "boolean",
-	default: false,
+	default: true, // gk: the GK splash (startup checks) runs on every interactive launch
 	ui: {
 		tab: "interaction",
 		group: "Startup & Updates",
 		label: "Show Startup Splash",
 		description:
-			"Show the full animated setup splash on normal interactive startup without rerunning setup. Quiet Startup still suppresses it.",
+			"Show the GK splash (startup checks, about 2 s, any key skips) on normal interactive startup. Quiet Startup still suppresses it.", // gk: wording
 	},
 });
 

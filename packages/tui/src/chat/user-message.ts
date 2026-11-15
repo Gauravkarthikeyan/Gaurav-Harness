@@ -163,6 +163,11 @@ export class UserMessageComponent extends Container implements ReactionTarget, T
 	#nativeHour12: boolean | undefined;
 	#nativeLinked = false;
 
+	/** gk: prompt text and send time, for the Stage's one-line transcript. */
+	get gkPrompt(): { text: string; timestamp: number | undefined } {
+		return { text: this.#text, timestamp: this.#timestamp };
+	}
+
 	constructor(text: string, options: UserBubbleOptions = {}) {
 		super();
 		ensureThemeSync();

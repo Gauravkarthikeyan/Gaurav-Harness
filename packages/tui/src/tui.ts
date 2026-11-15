@@ -517,6 +517,13 @@ export interface OverlayOptions {
 	 * when native terminal text selection takes precedence over pointer events.
 	 */
 	mouseTracking?: boolean;
+	/**
+	 * gk: a passive fullscreen surface (the GK Stage) that sits under every other overlay. It never
+	 * takes focus or holds the keys, does not count for {@link TUI.hasOverlay}, keeps the alternate
+	 * screen while ordinary overlays stack above it, and lets whichever component has focus place the
+	 * hardware cursor. Requires `fullscreen`.
+	 */
+	base?: boolean;
 }
 
 /**
@@ -1348,8 +1355,8 @@ export class TUI extends Container {
 		component.setIgnoreTight?.(true);
 		const entry = { component, options, preFocus: this.#focusedComponent, hidden: false, released: false };
 		this.overlayStack.push(entry);
-		// Only focus if overlay is actually visible
-		if (this.#isOverlayVisible(entry)) {
+		// Only focus if overlay is actually visible; a base surface never takes focus. // gk:
+		if (this.#isOverlayVisible(entry) && options?.base !== true) {
 			this.setFocus(component);
 		}
 		this.terminal.hideCursor();
@@ -1389,7 +1396,7 @@ export class TUI extends Container {
 					}
 				} else {
 					// Restore focus to this overlay when showing (if it's actually visible)
-					if (this.#isOverlayVisible(entry)) {
+					if (this.#isOverlayVisible(entry) && entry.options?.base !== true) { // gk: base never takes focus
 						this.setFocus(component);
 					}
 				}
@@ -1414,7 +1421,7 @@ export class TUI extends Container {
 
 	/** Check if there are any visible overlays */
 	hasOverlay(): boolean {
-		return this.overlayStack.some(o => this.#isOverlayVisible(o));
+		return this.overlayStack.some(o => o.options?.base !== true && this.#isOverlayVisible(o)); // gk: base surfaces excluded
 	}
 
 	/**
@@ -1509,6 +1516,7 @@ export class TUI extends Container {
 	#getKeyHolderOverlay(): (typeof this.overlayStack)[number] | undefined {
 		for (let i = this.overlayStack.length - 1; i >= 0; i--) {
 			const entry = this.overlayStack[i];
+			if (entry.options?.base === true) continue; // gk: a base surface never holds the keys
 			if (!entry.released && this.#isOverlayVisible(entry)) return entry;
 		}
 		return undefined;
@@ -4089,13 +4097,16 @@ export class TUI extends Container {
 		// requests it, borrow the terminal's alternate buffer and paint only the
 		// modal there; the normal screen and all accounting stay untouched.
 		const topOverlay = this.#getTopmostVisibleOverlay();
-		const wantAlt = topOverlay?.options?.fullscreen === true;
+		// gk: a visible base surface (the Stage) keeps the alternate buffer while dialogs stack above it.
+		const wantAlt =
+			topOverlay?.options?.fullscreen === true ||
+			this.overlayStack.some(o => o.options?.base === true && o.options.fullscreen === true && this.#isOverlayVisible(o));
 		const wantMouse: MouseTrackingState =
 			topOverlay === undefined
 				? this.#inlineMouseProvider?.() === true
 					? "inline"
 					: "off"
-				: wantAlt && topOverlay.options?.mouseTracking !== false
+				: wantAlt && topOverlay.options?.fullscreen === true && topOverlay.options?.mouseTracking !== false
 					? "full"
 					: "off";
 		if (wantAlt && !this.#altActive) {
@@ -4719,7 +4730,7 @@ export class TUI extends Container {
 			isFocusable(focused) &&
 			focused.focused &&
 			typeof focused.setUseTerminalCursor === "function" &&
-			isOverlayFocusTarget(topOverlay.component, focused);
+			(isOverlayFocusTarget(topOverlay.component, focused) || topOverlay.options?.base === true); // gk: base lets focus place the cursor
 		this.#emitAltFrame(prepared, width, height, true, acceptsTerminalCursor ? (markers[0] ?? null) : null);
 	}
 

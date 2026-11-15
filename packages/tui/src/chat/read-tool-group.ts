@@ -458,6 +458,11 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 		return lines;
 	}
 
+	/** gk: the read calls this group shows, in display order, for the Stage's one-line transcript. */
+	get gkToolCallIds(): readonly string[] {
+		return [...this.#entries.keys()];
+	}
+
 	refreshTranscriptPresentation(ids?: ReadonlySet<string>): boolean {
 		const entries = [...this.#entries.values()];
 		const before = entries.map(entry => entry.presentation.resolved);

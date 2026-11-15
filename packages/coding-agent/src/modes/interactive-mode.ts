@@ -290,6 +290,8 @@ import {
 	type VibeParentSession,
 	VibeSessionRegistry,
 } from "../vibe/runtime";
+import type { StageHost } from "../gk/stage/host"; // gk:
+import { mountStage, shouldMountStage } from "../gk/stage/mount"; // gk:
 import { AssistantMessageComponent } from "@oh-my-pi/pi-tui/chat/assistant-message";
 import { setSvgFigureRendering } from "@oh-my-pi/pi-tui/chat/svg-figure";
 import { setTableCharts } from "@oh-my-pi/pi-tui/chat/table-chart";
@@ -1468,6 +1470,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	#loopConditionAbort: AbortController | undefined;
 	#loopAutoSubmitTimer: NodeJS.Timeout | undefined;
 	#pendingLoopIterations = 0;
+	#stageHost: StageHost | undefined; // gk: full-screen Stage surface while mounted
 	#todoAutoClearTimer: NodeJS.Timeout | undefined;
 	#todoAutoClearGeneration = 0;
 	#modelCycleClearTimer: NodeJS.Timeout | undefined;
@@ -2490,6 +2493,7 @@ export class InteractiveMode implements InteractiveModeContext {
 			getDraftText: () => this.#inputController.getDraftText(),
 			beginDispose: () => {
 				this.#closeAttempt?.abort();
+				this.#stageHost?.stop(); // gk:
 				this.session.beginDispose();
 				this.statusLine.dispose();
 			},
@@ -2710,6 +2714,8 @@ export class InteractiveMode implements InteractiveModeContext {
 			});
 			this.#ownsStartedUi = true;
 		}
+		// gk: the Stage draws this UI (transcript + composer in pane 0.0) on the alternate screen.
+		if (!this.#stageHost && shouldMountStage(settings)) this.#stageHost = mountStage(this);
 		pushTerminalTitle();
 		// Claim the terminal title before any session update: this is the one path
 		// that releases the teardown latch, so a late async `setSessionTerminalTitle`
@@ -9607,6 +9613,11 @@ export class InteractiveMode implements InteractiveModeContext {
 
 	showModelSelector(options?: { temporaryOnly?: boolean; selectOnly?: SelectOnlyModelSelectorOptions }): void {
 		this.#selectorController.showModelSelector(options);
+	}
+
+	// gk: /models screen
+	showGkModelsScreen(): Promise<void> {
+		return this.#selectorController.showGkModelsScreen();
 	}
 
 	switchSessionModel(model: Model, thinkingLevel?: ConfiguredThinkingLevel): Promise<void> {
