@@ -138,6 +138,7 @@ describe("StageHost live worker panes", () => {
 		const workerName = run.run.workerName("W-01");
 		const fakeSession = {
 			subscribe: () => () => {},
+			messages: [],
 			getSessionStats: () => ({ cost: 0, toolCalls: 0, tokens: { input: 0, output: 0, cacheRead: 0, total: 0 } }),
 			model: { id: "claude-haiku-4-5" },
 		};
@@ -201,8 +202,62 @@ describe("StageHost live worker panes", () => {
 		host.setOrchestra(adapter);
 		adapter.attach(run);
 		host.start();
-		return { host, workerName, advance: (ms: number) => (now += ms), key: (data: string) => input?.(data) };
+		return {
+			host,
+			refs,
+			workerName,
+			advance: (ms: number) => (now += ms),
+			key: (data: string) => input?.(data),
+		};
 	}
+
+	it("follows a session the registry attached silently, replaying its transcript first", async () => {
+		const { host, refs } = await stage();
+		let listener: ((event: AgentSessionEvent) => void) | undefined;
+		const late = {
+			subscribe: (l: (event: AgentSessionEvent) => void) => {
+				listener = l;
+				return () => {};
+			},
+			getSessionStats: () => ({
+				cost: 0.01,
+				toolCalls: 1,
+				tokens: { input: 0, output: 0, cacheRead: 0, total: 900 },
+			}),
+			model: { id: "claude-sonnet-4-5" },
+			messages: [
+				{
+					role: "assistant",
+					timestamp: T0,
+					duration: 1500,
+					content: [
+						{ type: "thinking", thinking: "outline first" },
+						{ type: "toolCall", id: "r1", name: "read", arguments: { path: "brief.md" } },
+					],
+				},
+				{
+					role: "toolResult",
+					toolCallId: "r1",
+					timestamp: T0 + 1700,
+					isError: false,
+					content: [{ type: "text", text: "a\nb" }],
+				},
+			],
+		};
+		// A test double for the live session handle: only the members the host reads.
+		refs[0]!.session = late as unknown as AgentRef["session"];
+		host.tick();
+		expect(listener).toBeDefined();
+		listener!(writeDelta("tw", "index.html", "<main>hello</main>"));
+		const screen = host
+			.render(212, 58)
+			.map(r => r.replace(/\x1b\[[0-9;]*m/g, ""))
+			.join("\n");
+		expect(screen).toContain("▸ thought 1.5s · 4 tok");
+		expect(screen).toMatch(/✓ read brief\.md +2L 1\.7s/);
+		expect(screen).toContain("● write index.html");
+		expect(screen).toMatch(/ 1 {2}<main>hello<\/main>/);
+	});
 
 	it("draws thinking, streaming code and a nested subagent inset in the worker pane at exact width", async () => {
 		const { host, workerName, advance } = await stage();

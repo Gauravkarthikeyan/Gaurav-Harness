@@ -4,10 +4,13 @@
  * nested subagents, in arrival order. Bounded: at most {@link FEED_MAX_ENTRIES} entries, each text body
  * capped at {@link FEED_MAX_TEXT} characters (the tail is kept).
  */
-import type { ToolRecord } from "./tool-lines";
+import { isRecord } from "@oh-my-pi/pi-utils";
+import { resultText, type ToolRecord } from "./tool-lines";
 
 export const FEED_MAX_ENTRIES = 400;
 export const FEED_MAX_TEXT = 16_000;
+/** Transcript messages replayed when an agent's session is first seen mid-run. */
+const BACKFILL_MESSAGES = 120;
 
 export interface FeedThinking {
 	kind: "thinking";
@@ -78,6 +81,54 @@ export class AgentFeed {
 		if (this.#agents.has(agentId)) return;
 		this.#agents.add(agentId);
 		this.#push({ kind: "agent", agentId, at });
+	}
+
+	/**
+	 * Replay a transcript (an agent whose session the Stage first sees mid-run): settled thinking and
+	 * text, and its calls with their results. A feed that already mirrors a transcript is left alone.
+	 * `adopt` registers each call with the host and returns the record to share (an existing one for an
+	 * id it already tracks).
+	 */
+	backfill(messages: readonly unknown[], adopt: (record: ToolRecord) => ToolRecord): void {
+		if (this.entries.some(e => e.kind !== "agent")) return;
+		const calls = new Map<string, ToolRecord>();
+		for (const message of messages.slice(-BACKFILL_MESSAGES)) {
+			if (!isRecord(message)) continue;
+			const at = typeof message.timestamp === "number" ? message.timestamp : 0;
+			if (message.role === "toolResult" && typeof message.toolCallId === "string") {
+				const record = calls.get(message.toolCallId);
+				if (!record || record.endedAt !== null) continue;
+				record.endedAt = Math.max(record.startedAt, at);
+				record.isError = message.isError === true;
+				record.output = resultText(message);
+				record.details = message.details;
+				continue;
+			}
+			if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+			const end = at + (typeof message.duration === "number" ? message.duration : 0);
+			for (const part of message.content) {
+				if (!isRecord(part)) continue;
+				if (part.type === "thinking" && typeof part.thinking === "string" && part.thinking.trim()) {
+					this.#push({ kind: "thinking", text: capped(part.thinking), startedAt: at, endedAt: end });
+				} else if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
+					this.#push({ kind: "text", text: capped(part.text), at, done: true });
+				} else if (part.type === "toolCall" && typeof part.id === "string") {
+					const record = adopt({
+						id: part.id,
+						name: typeof part.name === "string" ? part.name : "tool",
+						args: isRecord(part.arguments) ? part.arguments : {},
+						agentId: null,
+						startedAt: at,
+						endedAt: null,
+						isError: false,
+						output: "",
+						details: undefined,
+					});
+					calls.set(part.id, record);
+					this.addTool(record);
+				}
+			}
+		}
 	}
 
 	#closeOpen(now: number): void {

@@ -153,6 +153,8 @@ interface AgentInfo {
 	ref: AgentRef;
 	/** Tile state last seen, for spawn/done events of agents drawn inset (no tile of their own). */
 	state?: TileState;
+	/** Session the host is subscribed to (the registry attaches sessions without emitting). */
+	session?: AgentRef["session"];
 	unsubscribe?: () => void;
 	stats?: { model?: string; tokens?: number; cost?: number; ctx?: { used: number; limit: number } };
 }
@@ -320,6 +322,7 @@ export class StageHost {
 		this.#bindSession();
 		this.#ticks++;
 		if (this.#ticks % SAMPLE_EVERY_TICKS === 0) this.#sample();
+		for (const info of this.#agents.values()) this.#bindAgent(info);
 		this.#refreshAgentStats();
 		this.#orchestra?.tick(this.#now());
 		this.store.tick();
@@ -596,14 +599,31 @@ export class StageHost {
 			} else if (existing.state !== state || existing.title !== ref.displayName || existing.parentId !== parentId) {
 				this.store.update(id, { state, title: ref.displayName, parentId });
 			}
-			if (ref.session && !info.unsubscribe) {
-				const agentId = ref.id;
-				info.unsubscribe = ref.session.subscribe(event => this.handleEvent(agentId, event));
-			} else if (!ref.session && info.unsubscribe) {
-				info.unsubscribe();
-				info.unsubscribe = undefined;
-			}
+			this.#bindAgent(info);
 		}
+	}
+
+	/**
+	 * Follow an agent's live session. `AgentRegistry.attachSession` emits nothing, so this also runs on
+	 * the tick; a session first seen mid-run replays its transcript into the feed.
+	 */
+	#bindAgent(info: AgentInfo): void {
+		const session = info.ref.session;
+		if (session === (info.session ?? null)) return;
+		info.unsubscribe?.();
+		info.unsubscribe = undefined;
+		info.session = session ?? undefined;
+		if (!session) return;
+		const agentId = info.ref.id;
+		this.#feedOf(agentId).backfill(session.messages, record => {
+			const known = this.#tools.get(record.id);
+			if (known) return known;
+			record.agentId = agentId;
+			this.#tools.set(record.id, record);
+			return record;
+		});
+		info.unsubscribe = session.subscribe(event => this.handleEvent(agentId, event));
+		this.#changed();
 	}
 
 	#refreshAgentStats(): void {
