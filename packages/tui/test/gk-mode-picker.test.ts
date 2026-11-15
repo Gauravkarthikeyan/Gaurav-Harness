@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import type { Component } from "../src";
 import { runLaunchScreens, type SplashCheckTask } from "../src/gk/launch-screens";
 import { type ModePickerState, pickerKey, renderModePicker } from "../src/gk/mode-picker";
@@ -149,6 +149,42 @@ describe("runLaunchScreens", () => {
 		});
 		clock = 10_000;
 		expect(await run).toEqual({ kind: "none" });
+	});
+
+	it("paces check rows with motion, then holds the full checklist before the picker", async () => {
+		// The splash ticks on setInterval; fake timers fire it deterministically while `clock` drives elapsed time.
+		jest.useFakeTimers();
+		const { host, overlay } = fakeHost();
+		let clock = 0;
+		const checks: SplashCheckTask[] = ["alpha", "beta"].map(id => ({
+			id,
+			label: id,
+			run: async () => ({ state: "ok", value: `${id} ok` }),
+		}));
+		const run = runLaunchScreens(host, {
+			version: "0.1.0",
+			motion: true,
+			now: () => clock,
+			splash: { checks },
+			picker: { initial: "solo", facts: () => ({ solo: [], orchestra: [] }) },
+		});
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+		const screen = () => plain([...(overlay()?.render(80) ?? [])]).join("\n");
+		// Both checks already settled, but only the first is revealed at 1 s.
+		clock = 1000;
+		expect(screen()).toMatch(/✓ alpha\s+alpha ok/);
+		expect(screen()).not.toContain("beta ok");
+		// Everything shows from 2.5 s; the splash still holds at 3.4 s.
+		clock = 3400;
+		jest.advanceTimersByTime(40);
+		expect(screen()).toContain("beta ok");
+		expect(screen()).not.toContain("┌─ Solo");
+		clock = 3600;
+		jest.advanceTimersByTime(40);
+		jest.useRealTimers();
+		expect(screen()).toContain("┌─ Solo");
+		overlay()?.handleInput?.("\r");
+		expect(await run).toEqual({ kind: "chosen", choice: "solo" });
 	});
 
 	it("quits from the picker on Ctrl+C", async () => {

@@ -8,10 +8,15 @@ import type { Component, OverlayFocusOwner } from "../tui";
 import { type LaunchChoice, type PickerFact, pickerKey, renderModePicker } from "./mode-picker";
 import { renderSplashFrame, type SplashCheck, type SplashCheckState } from "./splash-frame";
 
-/** Animated splash: at least this long, so the motion reads, then it ends as soon as every check settled. */
-export const SPLASH_MIN_MS = 1200;
+/** Animated splash: the motion runs at least this long. */
+export const SPLASH_MIN_MS = 3500;
+/** Animated splash: check rows settle on screen one by one, evenly between these times (or later, when the check does). */
+export const SPLASH_REVEAL_FIRST_MS = 500;
+export const SPLASH_REVEAL_LAST_MS = 2500;
+/** Animated splash: the finished checklist and full bar hold this long before the picker. */
+export const SPLASH_HOLD_MS = 1000;
 /** Hard cap; checks still pending then stay pending on the last frame. */
-export const SPLASH_MAX_MS = 2500;
+export const SPLASH_MAX_MS = 6000;
 /** Motionless splash: shown at least this long so it is not a flicker. */
 export const SPLASH_STATIC_MIN_MS = 500;
 const TICK_MS = 33;
@@ -60,6 +65,8 @@ function isTerminalReport(data: string): boolean {
 class LaunchScreensComponent implements Component, OverlayFocusOwner {
 	#phase: "splash" | "picker" | "done";
 	#checks: SplashCheck[];
+	/** When each check's result arrived (ms since start); `undefined` while pending. */
+	#settledAt: (number | undefined)[];
 	#focused: LaunchChoice;
 	#facts: { solo: readonly PickerFact[]; orchestra: readonly PickerFact[] } = { solo: [], orchestra: [] };
 	#startedAt = 0;
@@ -75,6 +82,7 @@ class LaunchScreensComponent implements Component, OverlayFocusOwner {
 		this.#now = options.now ?? (() => performance.now());
 		this.#phase = options.splash ? "splash" : "picker";
 		this.#checks = (options.splash?.checks ?? []).map(task => ({ id: task.id, label: task.label, state: "pending" }));
+		this.#settledAt = this.#checks.map(() => undefined);
 		this.#focused = options.picker?.initial ?? "solo";
 	}
 
@@ -127,17 +135,46 @@ class LaunchScreensComponent implements Component, OverlayFocusOwner {
 				height,
 			);
 		}
+		const elapsed = this.#now() - this.#startedAt;
 		return renderSplashFrame(
 			{
-				checks: this.#checks,
+				checks: this.#shownChecks(elapsed),
 				version: this.options.version,
 				host: this.options.splash?.host,
 				motion: this.options.motion,
 			},
 			width,
 			height,
-			this.#now() - this.#startedAt,
+			elapsed,
 		);
+	}
+
+	/** When check `index` may show its result: staggered with motion, at once without. */
+	#revealAt(index: number): number {
+		if (!this.options.motion) return 0;
+		const n = this.#checks.length;
+		if (n <= 1) return SPLASH_REVEAL_LAST_MS;
+		return SPLASH_REVEAL_FIRST_MS + ((SPLASH_REVEAL_LAST_MS - SPLASH_REVEAL_FIRST_MS) * index) / (n - 1);
+	}
+
+	/** The checklist as drawn at `elapsed`: a settled check still reads pending until its reveal time. */
+	#shownChecks(elapsed: number): SplashCheck[] {
+		return this.#checks.map((check, index) =>
+			check.state === "pending" || elapsed >= this.#revealAt(index)
+				? check
+				: { id: check.id, label: check.label, state: "pending" },
+		);
+	}
+
+	/** Time the whole checklist reads settled on screen, or `undefined` while any check is pending. */
+	#allShownAt(): number | undefined {
+		let at = 0;
+		for (let i = 0; i < this.#checks.length; i++) {
+			const settled = this.#settledAt[i];
+			if (settled === undefined) return undefined;
+			at = Math.max(at, settled, this.#revealAt(i));
+		}
+		return at;
 	}
 
 	#startSplash(): void {
@@ -154,6 +191,7 @@ class LaunchScreensComponent implements Component, OverlayFocusOwner {
 					if (this.#phase !== "splash") return;
 					this.#checks[index] = { id: task.id, label: task.label, ...result };
 					this.#checks = [...this.#checks];
+					this.#settledAt[index] = this.#now() - this.#startedAt;
 					this.#tick();
 				});
 		});
@@ -164,13 +202,15 @@ class LaunchScreensComponent implements Component, OverlayFocusOwner {
 	#tick(): void {
 		if (this.#phase !== "splash") return;
 		const elapsed = this.#now() - this.#startedAt;
-		const settled = this.#checks.every(check => check.state !== "pending");
-		const minMs = this.options.motion ? SPLASH_MIN_MS : SPLASH_STATIC_MIN_MS;
-		if (elapsed >= SPLASH_MAX_MS || (settled && elapsed >= minMs)) {
+		const shownAt = this.#allShownAt();
+		const done = this.options.motion
+			? shownAt !== undefined && elapsed >= Math.max(SPLASH_MIN_MS, shownAt + SPLASH_HOLD_MS)
+			: shownAt !== undefined && elapsed >= SPLASH_STATIC_MIN_MS;
+		if (elapsed >= SPLASH_MAX_MS || done) {
 			this.#endSplash();
 			return;
 		}
-		if (this.options.motion || settled) this.ctx.ui.requestRender();
+		if (this.options.motion || shownAt !== undefined) this.ctx.ui.requestRender();
 	}
 
 	#endSplash(): void {
