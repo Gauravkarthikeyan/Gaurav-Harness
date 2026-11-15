@@ -105,10 +105,10 @@ describe("buildDesktopNotifyCommand", () => {
 		expect(buildDesktopNotifyCommand(notifySend, "ping")).toEqual([
 			"/usr/bin/notify-send",
 			"--app-name",
-			"omp",
+			"GK Code",
 			"--urgency=normal",
 			"--expire-time=5000",
-			"omp",
+			"GK Code",
 			"ping",
 		]);
 	});
@@ -123,7 +123,7 @@ describe("buildDesktopNotifyCommand", () => {
 		).toEqual([
 			"/usr/bin/notify-send",
 			"--app-name",
-			"omp",
+			"GK Code",
 			"--urgency=critical",
 			"--expire-time=5000",
 			"Session 12",
@@ -135,10 +135,10 @@ describe("buildDesktopNotifyCommand", () => {
 		expect(buildDesktopNotifyCommand(notifySend, { title: "   ", body: "Waiting for input" })).toEqual([
 			"/usr/bin/notify-send",
 			"--app-name",
-			"omp",
+			"GK Code",
 			"--urgency=normal",
 			"--expire-time=5000",
-			"omp",
+			"GK Code",
 			"Waiting for input",
 		]);
 	});
@@ -154,7 +154,7 @@ describe("buildDesktopNotifyCommand", () => {
 			"/org/freedesktop/Notifications",
 			"--method",
 			"org.freedesktop.Notifications.Notify",
-			"omp",
+			"GK Code",
 			"0",
 			"",
 			"omp",
@@ -193,7 +193,7 @@ describe("sendDesktopNotification", () => {
 		expect(opts.cmd).toEqual([
 			"/usr/bin/notify-send",
 			"--app-name",
-			"omp",
+			"GK Code",
 			"--urgency=normal",
 			"--expire-time=5000",
 			"Session",

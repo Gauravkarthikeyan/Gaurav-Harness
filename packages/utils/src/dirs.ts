@@ -71,8 +71,9 @@ export function normalizeProfileName(profile: string | undefined): string | unde
 		!PROFILE_NAME_RE.test(normalized) ||
 		WINDOWS_RESERVED_BASENAME_RE.test(normalized)
 	) {
+		// gk: debrand
 		throw new Error(
-			`Invalid OMP profile "${profile}". Profile names must match ${PROFILE_NAME_RE.source}, ` +
+			`Invalid GK profile "${profile}". Profile names must match ${PROFILE_NAME_RE.source}, ` +
 				`cannot be "." or "..", cannot end with ".", and cannot be a Windows reserved device name ` +
 				`(CON, PRN, AUX, NUL, COM0-9, LPT0-9, or any of those with an extension).`,
 		);
@@ -102,7 +103,7 @@ function getProfileFromEnv(): string | undefined {
  * crash a bare `import` of this module with an uncaught stack trace before the
  * CLI's error handling is in scope. The default profile is used instead; the
  * CLI re-validates the env (see `runCli` in coding-agent/src/cli.ts) so the
- * user still gets a clean "Invalid OMP profile" message.
+ * user still gets a clean "Invalid GK profile" message.
  */
 function readProfileFromEnvSafe(): string | undefined {
 	try {

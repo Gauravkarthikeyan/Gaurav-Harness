@@ -96,13 +96,13 @@ function toolExtension(): Extension {
 		name: "gmail_send",
 		displayName: "gmail_send",
 		description: "gmail_send custom tool",
-		path: "/home/sf/worlds/personal/.omp/tools/gmail_send.ts",
+		path: "/home/sf/worlds/personal/.gk/tools/gmail_send.ts",
 		source: projectSource(),
 		state: "active",
 		raw: {
 			name: "gmail_send",
 			description: "gmail_send custom tool",
-			path: "/home/sf/worlds/personal/.omp/tools/gmail_send.ts",
+			path: "/home/sf/worlds/personal/.gk/tools/gmail_send.ts",
 		},
 	};
 }
@@ -133,7 +133,7 @@ function commandExtension(): Extension {
 		name: "triage",
 		displayName: "triage",
 		trigger: "/triage",
-		path: "/home/sf/worlds/_template/.omp/commands/triage.md",
+		path: "/home/sf/worlds/_template/.gk/commands/triage.md",
 		source: userSource(),
 		state: "active",
 		raw: {
@@ -389,20 +389,20 @@ describe("tool inspector", () => {
 		expect(text).not.toContain("9 args");
 	});
 
-	test("project list hints work for Windows .omp paths", () => {
+	test("project list hints work for Windows .gk paths", () => {
 		expect(
 			projectListHint({
 				...toolExtension(),
-				path: "C:\\repo\\.omp\\tools\\x.ts",
+				path: "C:\\repo\\.gk\\tools\\x.ts",
 			}),
 		).toBe("repo");
 	});
 
-	test("project list hints work for Windows .omp paths with forward slashes", () => {
+	test("project list hints work for Windows .gk paths with forward slashes", () => {
 		expect(
 			projectListHint({
 				...toolExtension(),
-				path: "C:/repo/.omp/tools/x.ts",
+				path: "C:/repo/.gk/tools/x.ts",
 			}),
 		).toBe("repo");
 	});
@@ -451,11 +451,11 @@ describe("tool inspector", () => {
 			[
 				{
 					...systemdExtension(),
-					path: "/home/sf/worlds/personal/.omp/tools/systemd.ts",
+					path: "/home/sf/worlds/personal/.gk/tools/systemd.ts",
 					source: projectSource(),
 				},
 			],
-			{ toolSource: systemdSource("/home/sf/worlds/personal/.omp/tools/systemd.ts") },
+			{ toolSource: systemdSource("/home/sf/worlds/personal/.gk/tools/systemd.ts") },
 		);
 		list.setFocused(true);
 		const text = Bun.stripANSI(list.render(80).join("\n"));
@@ -682,7 +682,7 @@ describe("tool inspector", () => {
 				label: "Gmail Send",
 				description: "Send an email via gog for an authorized personal Gmail account.",
 				source: "extension",
-				sourcePath: "/home/sf/worlds/personal/.omp/tools/gmail_send.ts",
+				sourcePath: "/home/sf/worlds/personal/.gk/tools/gmail_send.ts",
 				parameters: { type: "object", properties: { to: { type: "string" } } },
 			}),
 		});
@@ -791,7 +791,7 @@ describe("skill inspector", () => {
 		const list = new ExtensionList([
 			{
 				...listedSkillExtension(),
-				path: "/home/sf/worlds/personal/.omp/skills/gog-google/SKILL.md",
+				path: "/home/sf/worlds/personal/.gk/skills/gog-google/SKILL.md",
 				source: projectSource(),
 			},
 		]);
@@ -799,7 +799,7 @@ describe("skill inspector", () => {
 		expect(Bun.stripANSI(list.render(80).join("\n"))).toContain("personal");
 	});
 
-	test("project-only context files do not invent a project name without .omp", () => {
+	test("project-only context files do not invent a project name without .gk", () => {
 		const list = new ExtensionList([
 			{
 				id: "context-file:project:AGENTS.md",

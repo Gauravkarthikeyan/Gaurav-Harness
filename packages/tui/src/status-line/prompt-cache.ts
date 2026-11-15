@@ -47,7 +47,7 @@ function coldReasonText(reason: PromptCacheColdReason, nowMs?: number): string {
 			if (nowMs === undefined) return "expired";
 			return `expired ${sameDay(reason.at, nowMs) ? "at " : ""}${when(reason.at, nowMs)}${relative(reason.at, nowMs)}`;
 		case "refresh-missed":
-			return "omp's refresh found the entry gone";
+			return "GK Code's refresh found the entry gone"; // gk: debrand
 		case "model":
 			return `model changed: ${sanitizeStatusText(reason.from)} → ${sanitizeStatusText(reason.to)}`;
 		case "thinking":
