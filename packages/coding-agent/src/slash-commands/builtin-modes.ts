@@ -31,6 +31,8 @@ import { noThinkingMessage, resolveThinkingArgument } from "./helpers/effort";
 import { commandConsumed, errorMessage, usage } from "./helpers/parse";
 import { handleSecurityCommand } from "./helpers/security";
 import type { SlashCommandSpec } from "./types";
+import { theme } from "@oh-my-pi/pi-tui/theme";
+import { CreditsCard } from "../gk/credits"; // gk: /credits
 
 import {
 	cfgComputerBackgroundFallback,
@@ -417,6 +419,15 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 		handleTui: async (_command, runtime) => {
 			clearSubmittedText(runtime);
 			await runtime.ctx.showGkModelsScreen();
+		},
+	},
+	// gk: `/credits` shows the author card and the upstream attribution the MIT licenses require.
+	{
+		name: "credits",
+		description: "Author and upstream credits",
+		handleTui: async (_command, runtime) => {
+			clearSubmittedText(runtime);
+			runtime.ctx.presentCommandOutput(new CreditsCard((token, text) => theme.fg(token, text)));
 		},
 	},
 	{

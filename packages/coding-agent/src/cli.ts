@@ -561,6 +561,13 @@ export async function runCli(argv: string[]): Promise<void> {
 		process.stdout.write(`${formatGkVersion()}\n`);
 		return;
 	}
+	// gk: `gk-code --credits` prints the author card. Command boundary like --license: the card pulls pi-tui,
+	// which this entry keeps off the cold-start path.
+	if (resolvedArgv[0] === "--credits") {
+		const { formatCreditsOutput } = await import("./gk/credits");
+		process.stdout.write(formatCreditsOutput(process.stdout.columns || 80, process.stdout.isTTY === true));
+		return;
+	}
 	const helpOrVersion =
 		resolvedArgv[0] === "--help" ||
 		resolvedArgv[0] === "-h" ||
