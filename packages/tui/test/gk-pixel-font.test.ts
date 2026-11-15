@@ -87,6 +87,8 @@ describe("pixel font", () => {
 		expect(pixelTextWidth("GAURAV'S HARNESS", 1, true)).toBe(77);
 		expect(pixelTextWidth("GAURAV'S HARNESS", 2, true)).toBe(153);
 		expect(pixelTextWidth("", 1, true)).toBe(0);
+		// Header form: straight drop shadow, no extra column.
+		expect(pixelTextWidth("GAURAV'S HARNESS", 1, true, 0)).toBe(76);
 	});
 
 	it("draws glyph pixels with half blocks", () => {
@@ -111,6 +113,18 @@ describe("pixel font", () => {
 		expect(lines[4]).toContain("\x1b[38;2;255;255;255m██");
 		expect(lines[4]).toContain("\x1b[38;2;16;16;16m▄");
 		expect(lines[5]).toContain("\x1b[38;2;16;16;16m▀▀");
+	});
+
+	it("drops the header shadow straight down, keeping the letter gap clear", () => {
+		const face = "#ffffff";
+		const shadow = "#101010";
+		const lines = renderPixelText("GA", { scale: 1, shadow: true, shadowDx: 0, colors: { face, shadow }, colorMode: "truecolor" });
+		expect(plain(lines)).toEqual(["▄▀▀▀ ▄▀▀▄", "█ ▀█ █▀▀█", "▀▀▀▀ ▀  ▀"]);
+		// The gap column (4) never carries a shadow.
+		for (const line of plain(lines)) expect(line[4]).toBe(" ");
+		// Face over shadow: face fg on the shadow bg in one half-block cell.
+		expect(lines[0]).toContain("\x1b[38;2;255;255;255m▄\x1b[48;2;16;16;16m▀▀▀");
+		expect(lines[2]).toStartWith("\x1b[38;2;16;16;16m▀");
 	});
 
 	it("defaults to the gk-night accent", () => {
