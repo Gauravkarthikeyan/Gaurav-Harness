@@ -23,7 +23,7 @@ import {
 import { pixelTextWidth, renderPixelText } from "@oh-my-pi/pi-tui/gk/pixel-font";
 import { parseSgrMouse, type SgrMouseEvent } from "@oh-my-pi/pi-tui/mouse";
 import { gkPaletteFor } from "@oh-my-pi/pi-tui/theme/gk-palette";
-import { getCurrentThemeName } from "@oh-my-pi/pi-tui/theme/theme";
+import { getCurrentThemeName, highlightCode } from "@oh-my-pi/pi-tui/theme/theme";
 import type { TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
 import { isRecord } from "@oh-my-pi/pi-utils";
 import { formatGkVersion } from "../brand";
@@ -32,6 +32,7 @@ import type { AgentSessionEvent } from "../../session/agent-session-events";
 import { CellBuffer } from "./compositor";
 import { branchLabel, type GitLoader, type GitSnapshot, loadGitSnapshot } from "./git-source";
 import { layoutStage, type Rect, type StageLayout, toLayoutTiles } from "./layout";
+import { AgentFeed } from "./live-feed";
 import type { StageOrchestra } from "./orchestra-hooks";
 import { type HostStyle, type HostToken, themeStyle } from "./style";
 import { type Tile, type TileState, TileStore } from "./tiles";
@@ -53,10 +54,11 @@ import {
 	toolEvent,
 	toolLabel,
 } from "./tool-lines";
-import { renderTranscriptPane } from "./transcript-pane";
+import { composerRows, renderTranscriptPane } from "./transcript-pane";
 import { WeightTween } from "./tween";
 import { agentToken, bold, glyph, type StageToken, type StateGlyph } from "./widgets/common";
 import { renderEvents } from "./widgets/events";
+import { type FeedOptions, feedRows, type NestedView, toolBodyRows } from "./widgets/feed";
 import { renderGit } from "./widgets/git";
 import { renderHeader } from "./widgets/header";
 import { renderPaneStatus } from "./widgets/pane-status";
@@ -64,7 +66,7 @@ import { renderStatusBar } from "./widgets/statusbar";
 import { renderTabs, type TabSummaryItem } from "./widgets/tabs";
 import { renderTelemetry } from "./widgets/telemetry";
 import { renderTodo, type TodoItem } from "./widgets/todo";
-import { diffRows, eventRows, type TranscriptEvent } from "./widgets/transcript-lines";
+import { diffRows } from "./widgets/transcript-lines";
 
 export const TRANSCRIPT_ID = "transcript";
 export const MAIN_AGENT_ID = "Main";
@@ -75,6 +77,8 @@ const W_EVENTS = "w:events";
 
 const TICK_MS = 500;
 const FRAME_MS = 16;
+/** Streaming redraws are coalesced to at most ~30 fps. */
+const STREAM_FRAME_MS = 33;
 const SAMPLE_EVERY_TICKS = 4; // 2 s telemetry buckets → 30 buckets per 60 s window
 const SERIES_MAX = 60;
 const EVENTS_MAX = 200;
@@ -139,11 +143,16 @@ export interface StageHostOptions {
 	style?: HostStyle;
 	/** Start the 500 ms tick (tests drive `tick()` themselves). Default true. */
 	timers?: boolean;
+	/** Syntax highlighter for streaming code; default omp's native one with the theme style, plain otherwise. */
+	highlight?: ((code: string, lang: string | undefined) => string[]) | null;
+	/** Point omp's input at an agent's session (`null` = back to main): typing in a zoomed agent pane steers it. */
+	focusAgent?: (agentId: string | null) => void;
 }
 
 interface AgentInfo {
 	ref: AgentRef;
-	tools: string[];
+	/** Tile state last seen, for spawn/done events of agents drawn inset (no tile of their own). */
+	state?: TileState;
 	unsubscribe?: () => void;
 	stats?: { model?: string; tokens?: number; cost?: number; ctx?: { used: number; limit: number } };
 }
@@ -201,6 +210,8 @@ export class StageHost {
 	/** Calls still streaming their arguments (no `tool_execution_start` yet). */
 	readonly #pending = new Map<string, ToolRecord>();
 	readonly #agents = new Map<string, AgentInfo>();
+	readonly #feeds = new Map<string, AgentFeed>();
+	readonly #highlight: FeedOptions["highlight"];
 	readonly #diffByPath = new Map<string, string>();
 	readonly #events: StageEvent[] = [];
 	readonly #seen = new WeakMap<Component, number>();
@@ -214,6 +225,7 @@ export class StageHost {
 	#unsubInput: (() => void) | undefined;
 	#timer: NodeJS.Timeout | undefined;
 	#frameTimer: NodeJS.Timeout | undefined;
+	#streamTimer: NodeJS.Timeout | undefined;
 	#ticks = 0;
 	#streamedChars = 0;
 	#lastCost = 0;
@@ -226,6 +238,12 @@ export class StageHost {
 	#zoomedId: string | null = null;
 	#scroll = 0;
 	#maxScroll = 0;
+	/** Rows a zoomed agent pane is scrolled up from its live tail. */
+	#zoomScroll = 0;
+	#zoomMaxScroll = 0;
+	#zoomPage = 10;
+	/** Agent whose session omp's input is pointed at (zoomed agent pane). */
+	#steering: string | null = null;
 	#narration = "";
 	#orchestra: StageOrchestra | null = null;
 	#logo: { theme: string; rows: string[] } | undefined;
@@ -239,6 +257,12 @@ export class StageHost {
 		this.#startedAt = this.#now();
 		this.store = new TileStore({ now: this.#now });
 		this.#tween = new WeightTween({ now: this.#now, motion: options.motion ?? true });
+		this.#highlight =
+			options.highlight === undefined
+				? options.style
+					? undefined
+					: (code, lang) => highlightCode(code, lang)
+				: (options.highlight ?? undefined);
 		this.store.add({ id: TRANSCRIPT_ID, kind: "transcript", title: "session", state: "idle", pinned: true });
 		this.store.add({ id: W_TELEMETRY, kind: "telemetry", title: "telemetry", state: "idle" });
 		this.store.add({ id: W_EVENTS, kind: "events", title: "events", state: "idle" });
@@ -285,8 +309,10 @@ export class StageHost {
 		for (const info of this.#agents.values()) info.unsubscribe?.();
 		clearInterval(this.#timer);
 		clearTimeout(this.#frameTimer);
+		clearTimeout(this.#streamTimer);
 		this.#timer = undefined;
 		this.#frameTimer = undefined;
+		this.#streamTimer = undefined;
 	}
 
 	/** 500 ms heartbeat: chip timers, telemetry buckets, agent stats, session switches. */
@@ -318,7 +344,8 @@ export class StageHost {
 				break;
 			case "tool_execution_update":
 				this.#toolUpdate(event.toolCallId, event.partialResult);
-				break;
+				this.#streamRender();
+				return;
 			case "tool_execution_end":
 				this.#toolEnd(event.toolCallId, event.result, event.isError === true);
 				break;
@@ -327,9 +354,11 @@ export class StageHost {
 				if (e.type === "text_delta" || e.type === "thinking_delta" || e.type === "toolcall_delta") {
 					this.#streamedChars += e.delta.length;
 				}
-				if (agentId === null && (e.type === "toolcall_start" || e.type === "toolcall_delta" || e.type === "toolcall_end")) {
-					this.#trackPending(e.partial.content);
+				if (e.type === "toolcall_start" || e.type === "toolcall_delta" || e.type === "toolcall_end") {
+					this.#trackPending(agentId, e.partial.content);
 				}
+				if (agentId !== null) this.#feedOf(agentId).apply(event, this.#now());
+				this.#streamRender();
 				return;
 			}
 			case "message_start":
@@ -337,6 +366,10 @@ export class StageHost {
 					this.#scroll = 0;
 					this.#pushEvent({ at: this.#now(), agent: "you", glyph: "prompt", text: "prompt" });
 				}
+				if (agentId !== null) this.#feedOf(agentId).apply(event, this.#now());
+				break;
+			case "message_end":
+				if (agentId === null || !this.#feedOf(agentId).apply(event, this.#now())) return;
 				break;
 			case "agent_start":
 				if (agentId === null) this.#setBusy(true);
@@ -346,12 +379,39 @@ export class StageHost {
 					this.#setBusy(false);
 					this.#pending.clear();
 					this.refreshGit();
+				} else {
+					// Calls whose args streamed but never ran (aborted turn) stop spinning.
+					for (const [id, record] of this.#pending) {
+						if (record.agentId !== agentId) continue;
+						record.endedAt = this.#now();
+						record.isError = true;
+						this.#pending.delete(id);
+					}
 				}
 				break;
 			default:
 				return;
 		}
 		this.#changed();
+	}
+
+	/** Coalesce streaming redraws to ≤ 30 fps; nothing is scheduled while idle. */
+	#streamRender(): void {
+		if (this.#streamTimer) return;
+		this.#streamTimer = setTimeout(() => {
+			this.#streamTimer = undefined;
+			this.#ui.requestRender();
+		}, STREAM_FRAME_MS);
+		this.#streamTimer.unref?.();
+	}
+
+	#feedOf(agentId: string): AgentFeed {
+		let feed = this.#feeds.get(agentId);
+		if (!feed) {
+			feed = new AgentFeed();
+			this.#feeds.set(agentId, feed);
+		}
+		return feed;
 	}
 
 	#agentName(agentId: string | null): string {
@@ -375,11 +435,12 @@ export class StageHost {
 
 	#toolStart(agentId: string | null, id: string, name: string, args: unknown, intent: string | undefined): void {
 		const now = this.#now();
-		const record: ToolRecord = {
+		// A call whose args streamed keeps its record (the feed already shows it); it now runs.
+		const pending = this.#pending.get(id);
+		const record: ToolRecord = pending ?? {
 			id,
 			name,
-			args: isRecord(args) ? args : {},
-			intent,
+			args: {},
 			agentId,
 			startedAt: now,
 			endedAt: null,
@@ -387,6 +448,11 @@ export class StageHost {
 			output: "",
 			details: undefined,
 		};
+		record.name = name;
+		if (isRecord(args)) record.args = args;
+		record.intent = intent;
+		record.agentId = agentId;
+		record.startedAt = now;
 		this.#tools.set(id, record);
 		this.#pending.delete(id);
 		const parentId = this.#parentTile(agentId);
@@ -396,7 +462,7 @@ export class StageHost {
 			this.store.add({ id: `web:${id}`, kind: "web", parentId, title: toolLabel(record) });
 		}
 		if (agentId !== null) {
-			this.#agents.get(agentId)?.tools.push(id);
+			this.#feedOf(agentId).addTool(record);
 			this.store.touch(`agent:${agentId}`);
 		}
 		if (intent) {
@@ -491,36 +557,43 @@ export class StageHost {
 			const id = `agent:${ref.id}`;
 			const state: TileState = ref.status === "running" ? "running" : ref.status === "aborted" ? "error" : "done";
 			let info = this.#agents.get(ref.id);
+			const isNew = !info;
 			if (!info) {
-				info = { ref, tools: [] };
+				info = { ref };
 				this.#agents.set(ref.id, info);
 			}
 			info.ref = ref;
-			const parentId =
-				ref.parentId && ref.parentId !== MAIN_AGENT_ID && this.store.get(`agent:${ref.parentId}`)
-					? `agent:${ref.parentId}`
-					: TRANSCRIPT_ID;
-			const existing = this.store.get(id);
-			if (!existing) {
-				this.store.add({ id, kind: "agent", parentId, state, title: ref.displayName });
-				const parentName = parentId === TRANSCRIPT_ID ? "main" : this.#agentName(ref.parentId ?? null);
+			const previous = info.state;
+			info.state = state;
+			const nested = ref.parentId !== undefined && ref.parentId !== MAIN_AGENT_ID && this.#agents.has(ref.parentId);
+			// A subagent of an Orchestra worker draws as an inset in the worker's pane, not a tile of its own.
+			const inset = nested && this.#orchestra?.agentToken(ref.parentId!) !== undefined;
+			if (nested) this.#feedOf(ref.parentId!).addAgent(ref.id, ref.createdAt);
+			const parentId = nested && this.store.get(`agent:${ref.parentId}`) ? `agent:${ref.parentId}` : TRANSCRIPT_ID;
+			const parentName = parentId === TRANSCRIPT_ID && !inset ? "main" : this.#agentName(ref.parentId ?? null);
+			if (isNew) {
 				this.#pushEvent({
 					at: this.#now(),
 					agent: parentName,
-					agentToken: parentId === TRANSCRIPT_ID ? "accent" : this.#agentTokenOf(ref.parentId ?? null),
+					agentToken: parentName === "main" ? "accent" : this.#agentTokenOf(ref.parentId ?? null),
 					glyph: "spawn",
 					text: `spawn ${ref.displayName}`,
 				});
+			} else if (state === "done" && previous === "running") {
+				this.#pushEvent({
+					at: this.#now(),
+					agent: ref.displayName,
+					agentToken: this.#agentTokenOf(ref.id),
+					glyph: "done",
+					text: `done → ${parentName}`,
+				});
+			}
+			const existing = this.store.get(id);
+			if (inset) {
+				if (existing) this.store.remove(id);
+			} else if (!existing) {
+				this.store.add({ id, kind: "agent", parentId, state, title: ref.displayName });
 			} else if (existing.state !== state || existing.title !== ref.displayName || existing.parentId !== parentId) {
-				if (state === "done" && existing.state === "running") {
-					this.#pushEvent({
-						at: this.#now(),
-						agent: ref.displayName,
-						agentToken: this.#agentTokenOf(ref.id),
-						glyph: "done",
-						text: `done → ${parentId === TRANSCRIPT_ID ? "main" : this.#agentName(ref.parentId ?? null)}`,
-					});
-				}
 				this.store.update(id, { state, title: ref.displayName, parentId });
 			}
 			if (ref.session && !info.unsubscribe) {
@@ -636,25 +709,28 @@ export class StageHost {
 		return this.#messageIndex.calls.get(id);
 	}
 
-	#trackPending(content: readonly unknown[]): void {
+	#trackPending(agentId: string | null, content: readonly unknown[]): void {
 		for (const part of content) {
 			if (!isRecord(part) || part.type !== "toolCall" || typeof part.id !== "string" || this.#tools.has(part.id)) continue;
 			const args = isRecord(part.arguments) ? part.arguments : {};
 			const existing = this.#pending.get(part.id);
-			if (existing) existing.args = args;
-			else {
-				this.#pending.set(part.id, {
-					id: part.id,
-					name: typeof part.name === "string" ? part.name : "tool",
-					args,
-					agentId: null,
-					startedAt: this.#now(),
-					endedAt: null,
-					isError: false,
-					output: "",
-					details: undefined,
-				});
+			if (existing) {
+				existing.args = args;
+				continue;
 			}
+			const record: ToolRecord = {
+				id: part.id,
+				name: typeof part.name === "string" ? part.name : "tool",
+				args,
+				agentId,
+				startedAt: this.#now(),
+				endedAt: null,
+				isError: false,
+				output: "",
+				details: undefined,
+			};
+			this.#pending.set(part.id, record);
+			if (agentId !== null) this.#feedOf(agentId).addTool(record);
 		}
 	}
 
@@ -736,7 +812,7 @@ export class StageHost {
 		const todos = this.#todoItems();
 		this.#syncTodoTile(todos);
 		const tiles = toLayoutTiles(this.store, now, this.#preferredRows(todos));
-		if (this.#zoomedId && !this.store.get(this.#zoomedId)) this.#zoomedId = null;
+		if (this.#zoomedId && !this.store.get(this.#zoomedId)) this.#setZoom(null);
 		const input = {
 			cols,
 			rows,
@@ -1056,6 +1132,56 @@ export class StageHost {
 		return `${label}${s(focused ? "accent" : "text", name)}${detail ? s("muted", ` · ${detail}`) : ""}`;
 	}
 
+	/**
+	 * Agent pane body: feed rows tail-anchored (a zoomed pane scrolls with PgUp/PgDn), omp's composer under
+	 * them while the pane steers its agent, the statusline last. Returns the editor's cursor.
+	 */
+	#drawAgentBody(
+		buf: CellBuffer,
+		inner: Rect,
+		rows: readonly string[],
+		status: readonly string[],
+		zoomed: boolean,
+		steer: boolean,
+	): { row: number; col: number } | null {
+		const room = Math.max(0, inner.h - status.length);
+		const composed = steer ? composerRows(this.#opts.chrome(), undefined, inner.w, Math.max(0, room - 1)) : null;
+		const chromeH = composed?.rows.length ?? 0;
+		const bodyH = Math.max(0, room - chromeH);
+		const maxScroll = Math.max(0, rows.length - bodyH);
+		let scroll = 0;
+		if (zoomed) {
+			this.#zoomMaxScroll = maxScroll;
+			this.#zoomPage = Math.max(1, bodyH - 2);
+			scroll = Math.min(this.#zoomScroll, maxScroll);
+		}
+		const end = rows.length - scroll;
+		buf.blit(rows.slice(Math.max(0, end - bodyH), end), { ...inner, h: bodyH });
+		if (composed) buf.blit(composed.rows, { ...inner, y: inner.y + bodyH, h: chromeH });
+		if (status.length > 0) buf.blit(status, { ...inner, y: inner.y + inner.h - status.length, h: status.length });
+		return composed?.cursor ? { row: inner.y + bodyH + composed.cursor.row, col: inner.x + composed.cursor.col } : null;
+	}
+
+	/** Inset of a nested subagent in its parent's pane; `undefined` when it has a tile of its own. */
+	#nestedView(agentId: string, now: number): NestedView | undefined {
+		const info = this.#agents.get(agentId);
+		if (!info || this.store.get(`agent:${agentId}`)) return undefined;
+		const { ref, stats } = info;
+		const running = info.state === "running";
+		const end = running ? now : (ref.lifecycle?.terminalAt ?? ref.lastActivity);
+		const cost = stats?.cost;
+		return {
+			label: `${this.#agentName(ref.parentId ?? null)} › ${ref.displayName}`,
+			token: this.#agentTokenOf(ref.parentId ?? null),
+			model: stats?.model,
+			glyph: running ? "running" : info.state === "error" ? "failed" : "done",
+			metric: [formatElapsed(end - ref.createdAt), cost ? `$${cost.toFixed(cost < 0.1 ? 3 : 2)}` : ""]
+				.filter(Boolean)
+				.join(" · "),
+			entries: this.#feeds.get(agentId)?.entries ?? [],
+		};
+	}
+
 	#drawTile(
 		buf: CellBuffer,
 		tile: Tile,
@@ -1069,6 +1195,10 @@ export class StageHost {
 		const anyFocused = this.store.focused() !== undefined;
 		const focused = tile.focused || (tile.kind === "transcript" && !anyFocused);
 		const border: StageToken = tile.state === "error" && tile.kind !== "command" ? "error" : focused ? "borderAccent" : "border";
+		const paneOf = (id: string) => {
+			const n = panes.get(`cmd:${id}`) ?? panes.get(`web:${id}`);
+			return n === undefined || (!layout.tiles.has(`cmd:${id}`) && !layout.tiles.has(`web:${id}`)) ? undefined : `0.${n}`;
+		};
 		if (this.#orchestra && (tile.kind === "proc" || tile.kind === "dag" || tile.kind === "telemetry")) {
 			const widget = this.#orchestra.widget(tile, Math.max(0, rect.w - 2), Math.max(0, rect.h - 2), now, s);
 			if (widget) {
@@ -1094,16 +1224,12 @@ export class StageHost {
 						toolRows: this.#orchestra
 							? (record, width) => this.#orchestra?.toolRows(record, width, now, s)
 							: undefined,
+						toolBody: (record, width) =>
+							toolBodyRows(record, width, { now, style: s, highlight: this.#highlight, paneOf }),
 						isAssistant: this.#opts.isAssistant,
 						expandTools: this.#opts.expandTools?.() ?? false,
 						scroll: this.#scroll,
-						lineContext: {
-							now,
-							paneOf: id => {
-								const n = panes.get(`cmd:${id}`) ?? panes.get(`web:${id}`);
-								return n === undefined || !layout.tiles.has(`cmd:${id}`) && !layout.tiles.has(`web:${id}`) ? undefined : `0.${n}`;
-							},
-						},
+						lineContext: { now, paneOf },
 						seenAt: c => {
 							let at = this.#seen.get(c);
 							if (at === undefined) {
@@ -1170,60 +1296,53 @@ export class StageHost {
 			case "agent": {
 				const agentId = tile.id.slice(6);
 				const info = this.#agents.get(agentId);
-				const view = this.#orchestra?.agentPane({
-					agentId,
-					tile,
-					tools: (info?.tools ?? []).map(id => this.#tools.get(id)).filter((r): r is ToolRecord => r !== undefined),
-					stats: info?.stats,
-					now,
-					width: Math.max(0, rect.w - 2),
-					style: s,
-				});
+				const zoomed = this.#zoomedId === tile.id;
+				const width = Math.max(0, rect.w - 2);
+				const body = (w: number) =>
+					feedRows(this.#feeds.get(agentId)?.entries ?? [], w, {
+						now,
+						style: s,
+						limit: zoomed ? undefined : rect.h,
+						expanded: zoomed,
+						highlight: this.#highlight,
+						paneOf,
+						nested: child => this.#nestedView(child, now),
+					});
+				const view = this.#orchestra?.agentPane({ agentId, tile, body, stats: info?.stats, now, width, style: s });
+				let inner: Rect;
+				let rows: string[];
+				let status: string[];
 				if (view) {
 					// gk: Orchestra worker pane (title, @name badge, body, statusline from the crew adapter).
-					const paneTitle = this.#paneTitle(index, view.title, "", focused);
-					const inner = this.#frame(buf, rect, paneTitle, view.badge, border);
-					const statusH = view.status && inner.h >= 2 ? 1 : 0;
-					const bodyH = Math.max(0, inner.h - statusH);
-					buf.blit(view.rows.slice(Math.max(0, view.rows.length - bodyH)), { ...inner, h: bodyH });
-					if (view.status && statusH) {
-						const statusRect = { x: inner.x, y: inner.y + inner.h - 1, w: inner.w, h: 1 };
-						buf.blit(renderPaneStatus(view.status, inner.w, 1, s), statusRect);
-					}
-					return null;
+					inner = this.#frame(buf, rect, this.#paneTitle(index, view.title, "", focused), view.badge, border);
+					rows = view.rows;
+					status = view.status ? renderPaneStatus(view.status, inner.w, 1, s) : [];
+				} else {
+					const lineage = this.store.lineageTitle(tile.id);
+					const elapsed = (tile.endedAt ?? now) - tile.createdAt;
+					const badge =
+						tile.state === "running"
+							? `${s("accent", "●")} ${s("muted", formatElapsed(elapsed))}`
+							: `${glyph(tile.state === "error" ? "failed" : "done", s)} ${s("muted", formatElapsed(elapsed))}`;
+					const stats = info?.stats;
+					inner = this.#frame(buf, rect, this.#paneTitle(index, lineage, stats?.model ?? "", focused), badge, border);
+					rows = body(inner.w);
+					if (rows.length === 0 && info?.ref.activity) rows = [s("muted", info.ref.activity)];
+					status = renderPaneStatus(
+						{
+							agent: info?.ref.displayName,
+							agentToken: this.#agentTokenOf(agentId),
+							model: stats?.model,
+							tokens: stats?.tokens !== undefined ? compact(stats.tokens) : undefined,
+							cost: stats?.cost !== undefined ? money(stats.cost) : undefined,
+							ctx: stats?.ctx,
+						},
+						inner.w,
+						1,
+						s,
+					);
 				}
-				const lineage = this.store.lineageTitle(tile.id);
-				const running = tile.state === "running";
-				const elapsed = (tile.endedAt ?? now) - tile.createdAt;
-				const badge = running
-					? `${s("accent", "●")} ${s("muted", formatElapsed(elapsed))}`
-					: `${glyph(tile.state === "error" ? "failed" : "done", s)} ${s("muted", formatElapsed(elapsed))}`;
-				const stats = info?.stats;
-				const inner = this.#frame(buf, rect, this.#paneTitle(index, lineage, stats?.model ?? "", focused), badge, border);
-				const token = this.#agentTokenOf(agentId);
-				const status = renderPaneStatus(
-					{
-						agent: info?.ref.displayName,
-						agentToken: token,
-						model: stats?.model,
-						tokens: stats?.tokens !== undefined ? compact(stats.tokens) : undefined,
-						cost: stats?.cost !== undefined ? money(stats.cost) : undefined,
-						ctx: stats?.ctx,
-					},
-					inner.w,
-					1,
-					s,
-				);
-				const bodyH = Math.max(0, inner.h - 1);
-				const events: TranscriptEvent[] = (info?.tools ?? [])
-					.map(id => this.#tools.get(id))
-					.filter((r): r is ToolRecord => r !== undefined)
-					.map(r => toolEvent(r, { now }));
-				let rows = eventRows(events, inner.w, s);
-				if (rows.length === 0 && info?.ref.activity) rows = [s("muted", info.ref.activity)];
-				buf.blit(rows.slice(Math.max(0, rows.length - bodyH)), { ...inner, h: bodyH });
-				if (inner.h >= 2) buf.blit(status, { x: inner.x, y: inner.y + inner.h - 1, w: inner.w, h: 1 });
-				return null;
+				return this.#drawAgentBody(buf, inner, rows, inner.h >= 2 ? status : [], zoomed, this.#steering === agentId);
 			}
 			case "telemetry": {
 				const stats = this.#session?.getSessionStats();
@@ -1301,7 +1420,10 @@ export class StageHost {
 	#onMouse(event: SgrMouseEvent): void {
 		const id = this.#tileAt(event.col, event.row);
 		if (event.wheel !== null) {
-			if (id === TRANSCRIPT_ID || id === undefined) {
+			if (this.#zoomedId && id === this.#zoomedId && this.store.get(id)?.kind === "agent") {
+				this.#zoomScroll = Math.max(0, Math.min(this.#zoomMaxScroll, this.#zoomScroll - event.wheel * WHEEL_ROWS));
+				this.#changed();
+			} else if (id === TRANSCRIPT_ID || id === undefined) {
 				this.#scroll = Math.max(0, Math.min(this.#maxScroll, this.#scroll - event.wheel * WHEEL_ROWS));
 				this.#changed();
 			}
@@ -1318,6 +1440,12 @@ export class StageHost {
 			return;
 		}
 		if (id === undefined) return;
+		const tile = this.store.get(id);
+		// A second click on a focused agent pane zooms it.
+		if (tile?.kind === "agent" && tile.focused && this.#zoomedId !== id) {
+			this.zoom(id);
+			return;
+		}
 		this.store.focus(id === TRANSCRIPT_ID ? null : id);
 		this.#changed();
 	}
@@ -1333,18 +1461,28 @@ export class StageHost {
 		if (this.#ui.hasOverlay()) return undefined;
 		const focused = this.store.focused();
 		if (!this.#zoomedId && !focused) return undefined;
+		const zoomedAgent = this.#zoomedId !== null && this.store.get(this.#zoomedId)?.kind === "agent";
+		if (zoomedAgent && (matchesKey(data, "pageUp") || matchesKey(data, "pageDown"))) {
+			const step = matchesKey(data, "pageUp") ? this.#zoomPage : -this.#zoomPage;
+			this.#zoomScroll = Math.max(0, Math.min(this.#zoomMaxScroll, this.#zoomScroll + step));
+			this.#changed();
+			return { consume: true };
+		}
 		if (matchesKey(data, "enter")) {
+			// While a zoomed pane steers its agent, Enter submits the composer to that agent.
+			if (zoomedAgent && this.#steering) return undefined;
 			if (focused) {
-				this.#zoomedId = this.#zoomedId === focused.id ? null : focused.id;
-				this.#changed();
+				this.zoom(this.#zoomedId === focused.id ? null : focused.id);
 				return { consume: true };
 			}
 			return undefined;
 		}
 		if (matchesKey(data, "escape")) {
-			if (this.#zoomedId) this.#zoomedId = null;
-			else this.store.focus(null);
-			this.#changed();
+			if (this.#zoomedId) this.zoom(null);
+			else {
+				this.store.focus(null);
+				this.#changed();
+			}
 			return { consume: true };
 		}
 		return undefined;
@@ -1352,7 +1490,18 @@ export class StageHost {
 
 	/** Zoom a tile full-body (`null` returns to the tiling). */
 	zoom(id: string | null): void {
-		this.#zoomedId = id;
+		this.#setZoom(id);
 		this.#changed();
+	}
+
+	/** Zooming an agent pane with a live session points omp's input at it, so typing steers that agent. */
+	#setZoom(id: string | null): void {
+		this.#zoomedId = id;
+		this.#zoomScroll = 0;
+		const agentId = id?.startsWith("agent:") ? id.slice(6) : null;
+		const steer = agentId !== null && this.#opts.focusAgent && this.#agents.get(agentId)?.ref.session ? agentId : null;
+		if (steer === this.#steering) return;
+		this.#steering = steer;
+		this.#opts.focusAgent?.(steer);
 	}
 }

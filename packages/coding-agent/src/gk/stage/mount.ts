@@ -7,6 +7,7 @@ import type { Component, Container, TUI } from "@oh-my-pi/pi-tui";
 import { AssistantMessageComponent } from "@oh-my-pi/pi-tui/chat/assistant-message";
 import type { TranscriptContainer } from "@oh-my-pi/pi-tui/chrome/transcript-container";
 import type { TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
+import { logger } from "@oh-my-pi/pi-utils";
 import { setNativeSymbolPreset } from "@oh-my-pi/pi-tui/theme/theme";
 import type { Settings } from "../../config/settings";
 import { cfgGkStageEnabled } from "../../modes/settings";
@@ -40,6 +41,9 @@ export interface StageModeContext {
 	readonly editor: { setBorderVisible(visible: boolean): void; setPromptGutter(gutter: string | undefined): void };
 	readonly toolOutputExpanded: boolean;
 	readonly todoPhases: readonly TodoPhase[];
+	/** omp's subagent focus: the composer, transcript and interrupts retarget that agent's session. */
+	focusAgentSession(id: string): Promise<void>;
+	unfocusSession(): Promise<void>;
 }
 
 /** Stage on: setting on (default) and a real terminal on both ends. `--print`, RPC and pipes never get here. */
@@ -93,6 +97,11 @@ export function mountStage(ctx: StageModeContext): StageHost {
 		todos: () => ctx.todoPhases,
 		registry: AgentRegistry.global(),
 		cwd: ctx.sessionManager.getCwd(),
+		focusAgent: id => {
+			void (id === null ? ctx.unfocusSession() : ctx.focusAgentSession(id)).catch((error: unknown) => {
+				logger.warn("Stage could not focus agent", { id, error: String(error) });
+			});
+		},
 	});
 	host.start();
 	return host;

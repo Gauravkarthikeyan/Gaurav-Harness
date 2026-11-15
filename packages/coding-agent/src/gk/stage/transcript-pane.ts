@@ -38,6 +38,8 @@ export interface TranscriptPaneInput {
 	tool: (id: string) => ToolRecord | undefined;
 	/** Rows that replace a call's one-liner (Orchestra: `crew_plan` + the PLAN table); `undefined` keeps it. */
 	toolRows?: (record: ToolRecord, width: number) => string[] | undefined;
+	/** Rows under a call's one-liner while it streams (write content, edit preview, bash output). */
+	toolBody?: (record: ToolRecord, width: number) => string[];
 	/** Assistant-message blocks get the accent bar. */
 	isAssistant: (component: Component) => boolean;
 	/** omp's "expand tools" toggle: draw full cards instead of one-liners. */
@@ -77,7 +79,11 @@ function blockRows(component: Component, width: number, input: TranscriptPaneInp
 			const record = input.tool(id);
 			if (!record) continue;
 			const custom = input.toolRows?.(record, width);
-			rows.push(...(custom ?? eventRows([toolEvent(record, input.lineContext)], width, style)));
+			if (custom) rows.push(...custom);
+			else {
+				rows.push(...eventRows([toolEvent(record, input.lineContext)], width, style));
+				if (record.endedAt === null && input.toolBody) rows.push(...input.toolBody(record, width));
+			}
 		}
 		if (rows.length > 0) return { rows, compact: true };
 	}
@@ -101,26 +107,40 @@ function blockRows(component: Component, width: number, input: TranscriptPaneInp
 }
 
 /**
+ * Composer roots plus pinned status rows, cut to the last `height` rows; the editor's cursor marker is
+ * stripped and reported as a (row, col) inside the returned rows.
+ */
+export function composerRows(
+	roots: readonly Component[],
+	status: readonly string[] | undefined,
+	width: number,
+	height: number,
+): { rows: string[]; cursor: { row: number; col: number } | null } {
+	let rows: string[] = [];
+	for (const root of roots) rows.push(...root.render(width));
+	if (status) rows.push(...status);
+	if (rows.length > height) rows = rows.slice(rows.length - height);
+	let cursor: { row: number; col: number } | null = null;
+	for (let i = 0; i < rows.length; i++) {
+		const at = rows[i]!.indexOf(CURSOR_MARKER);
+		if (at < 0) continue;
+		const row = rows[i]!;
+		cursor ??= { row: i, col: visibleWidth(row.slice(0, at)) };
+		rows[i] = row.split(CURSOR_MARKER).join("");
+	}
+	return { rows, cursor };
+}
+
+/**
  * Lay out the pane: composer chrome pinned to the bottom, transcript tail above it, `scroll` rows up.
  * Blocks render newest-first and stop once the visible window is covered, so a long session costs
  * only what is on screen.
  */
 export function renderTranscriptPane(input: TranscriptPaneInput, width: number, height: number): TranscriptPaneOutput {
 	if (width <= 0 || height <= 0) return { rows: [], cursor: null, maxScroll: 0 };
-	let chrome: string[] = [];
-	for (const root of input.chrome) chrome.push(...root.render(width));
-	if (input.status) chrome.push(...input.status);
-	if (chrome.length > height) chrome = chrome.slice(chrome.length - height);
-
-	let cursor: { row: number; col: number } | null = null;
-	for (let i = 0; i < chrome.length; i++) {
-		const at = chrome[i]!.indexOf(CURSOR_MARKER);
-		if (at < 0) continue;
-		const row = chrome[i]!;
-		if (cursor === null) cursor = { row: height - chrome.length + i, col: visibleWidth(row.slice(0, at)) };
-		chrome[i] = row.split(CURSOR_MARKER).join("");
-	}
-
+	const composed = composerRows(input.chrome, input.status, width, height);
+	const chrome = composed.rows;
+	const cursor = composed.cursor ? { row: height - chrome.length + composed.cursor.row, col: composed.cursor.col } : null;
 	const room = height - chrome.length;
 	const need = room + Math.max(0, input.scroll);
 	const tail: string[] = [];

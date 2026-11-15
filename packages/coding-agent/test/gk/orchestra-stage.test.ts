@@ -5,6 +5,8 @@ import { OrchestraStage, W_DAG, W_PROC } from "../../src/gk/orchestra/stage-adap
 import { StageHost } from "../../src/gk/stage/host";
 import { TileStore } from "../../src/gk/stage/tiles";
 import type { ToolRecord } from "../../src/gk/stage/tool-lines";
+import { AgentFeed } from "../../src/gk/stage/live-feed";
+import { feedRows } from "../../src/gk/stage/widgets/feed";
 import { harness, item, tick } from "./crew-fixtures";
 import { identity, sgr } from "./stage/widgets/helpers";
 
@@ -63,10 +65,12 @@ describe("OrchestraStage", () => {
 			output: "",
 			details: { diff: "+1|hi" },
 		};
+		const feed = new AgentFeed();
+		feed.addTool(edit);
 		const pane = stage.agentPane({
 			agentId: "w1",
 			tile: store.all()[0]!,
-			tools: [edit],
+			body: width => feedRows(feed.entries, width, { now: 1000, style: identity }),
 			stats: { model: "one", tokens: 1200, cost: 0.01 },
 			now: 1000,
 			width: 80,
@@ -78,7 +82,7 @@ describe("OrchestraStage", () => {
 		expect(pane.rows.join("\n")).toContain("+ hi");
 		expect(pane.status).toMatchObject({ agent: name, model: "one", tokens: "1.2k", cost: "$0.01", scope: "W-01/" });
 		expect(
-			stage.agentPane({ agentId: "nobody", tile: store.all()[0]!, tools: [], now: 0, width: 80, style: identity }),
+			stage.agentPane({ agentId: "nobody", tile: store.all()[0]!, body: () => [], now: 0, width: 80, style: identity }),
 		).toBeUndefined();
 	});
 

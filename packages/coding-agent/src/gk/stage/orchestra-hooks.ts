@@ -30,8 +30,8 @@ export interface StageAgentInput {
 	/** Registry agent id, or `crew-<itemId>` for an item that has no worker yet. */
 	agentId: string;
 	tile: Tile;
-	/** This agent's tool calls, oldest first. */
-	tools: readonly ToolRecord[];
+	/** The agent's live feed (thinking, text, streaming tool calls, nested insets) at `width`, oldest first. */
+	body: (width: number) => string[];
 	/** Live session stats when the agent has a session. */
 	stats?: { model?: string; tokens?: number; cost?: number; ctx?: { used: number; limit: number } };
 	now: number;

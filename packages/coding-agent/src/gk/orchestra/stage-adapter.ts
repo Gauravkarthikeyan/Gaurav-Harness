@@ -11,26 +11,18 @@ import type { CrewItemSnapshot, CrewItemState } from "../crew-runtime";
 import type { CrewRunContext } from "../crew-tools";
 import type { StageAgentInput, StageAgentPane, StageOrchestra, StagePaneFrame } from "../stage/orchestra-hooks";
 import type { Tile, TileStore } from "../stage/tiles";
-import {
-	clockTime,
-	diffTextOf,
-	formatElapsed,
-	isEditCall,
-	latestHunk,
-	type ToolRecord,
-	toolEvent,
-} from "../stage/tool-lines";
+import { clockTime, formatElapsed, type ToolRecord } from "../stage/tool-lines";
 import { agentToken, glyph, type StageStyle, type StageToken, type StateGlyph } from "../stage/widgets/common";
 import { renderDag, type DagState } from "../stage/widgets/dag";
 import { renderProc, type ProcRow } from "../stage/widgets/proc";
 import { renderThroughput } from "../stage/widgets/sparkline";
-import { diffRows, eventRows, type PlanRow, planRows } from "../stage/widgets/transcript-lines";
+import { eventRows, type PlanRow, planRows } from "../stage/widgets/transcript-lines";
 import { formatUsd, savingsLabel } from "../ui/casting-board";
 
 export const W_PROC = "w:proc";
 export const W_DAG = "w:dag";
 const QUEUED_PREFIX = "crew-";
-const SAMPLE_EVERY_TICKS = 4;
+const SAMPLE_EVERY_TICKS = 2;
 const SERIES_MAX = 60;
 const TICK_SEC = 0.5;
 
@@ -41,11 +33,14 @@ export interface OrchestraStageTarget {
 	requestRender(): void;
 }
 
-/** Live session handle the adapter samples for tok/s. */
+/** Live session handle the adapter samples for tok/s (an `AgentSession` satisfies it). */
 export interface StreamSource {
 	subscribe(
 		listener: (event: { type: string; assistantMessageEvent?: { type: string; delta?: string } }) => void,
 	): () => void;
+	readonly isStreaming?: boolean;
+	/** The session's own generation meter (rolling tok/s that holds across tool runs), when it has one. */
+	readonly tokenRate?: { rate(nowMs?: number): number | null };
 }
 
 export interface OrchestraStageSources {
@@ -241,20 +236,30 @@ export class OrchestraStage implements StageOrchestra {
 		});
 	}
 
-	tick(_now: number): void {
+	tick(now: number): void {
 		if (!this.#ctx) return;
 		this.sync();
 		if (++this.#ticks % SAMPLE_EVERY_TICKS !== 0) return;
 		const bucket = SAMPLE_EVERY_TICKS * TICK_SEC;
 		for (const rate of this.#rates.values()) {
-			rate.series.push(rate.chars / 4 / bucket);
+			rate.series.push(this.#meterRate(rate, now) ?? rate.chars / 4 / bucket);
 			if (rate.series.length > SERIES_MAX) rate.series.shift();
 			rate.chars = 0;
 		}
 	}
 
-	#tokPerSec(key: string): number | undefined {
-		return this.#rates.get(key)?.series.at(-1);
+	/** The session's rolling generation rate while its turn runs; `undefined` when idle or unmetered. */
+	#meterRate(rate: Rate, now: number): number | undefined {
+		const source = rate.source;
+		if (!source?.tokenRate || source.isStreaming === false) return undefined;
+		return source.tokenRate.rate(now) ?? undefined;
+	}
+
+	/** Live tok/s for the proc table: the meter now, else the last sampled bucket. */
+	#tokPerSec(key: string, now: number): number | undefined {
+		const rate = this.#rates.get(key);
+		if (!rate) return undefined;
+		return this.#meterRate(rate, now) ?? rate.series.at(-1);
 	}
 
 	#workerCost(): number {
@@ -377,14 +382,7 @@ export class OrchestraStage implements StageOrchestra {
 				],
 			};
 		}
-		const rows: string[] = [];
-		for (const record of input.tools) {
-			rows.push(...eventRows([toolEvent(record, { now })], width, s));
-			if (isEditCall(record.name) && record.endedAt !== null && !record.isError) {
-				const hunk = latestHunk(diffTextOf(record.details));
-				if (hunk) rows.push(...diffRows({ ...hunk.block, indent: 6 }, width, s).slice(0, 8));
-			}
-		}
+		const rows = input.body(width);
 		if (rows.length === 0) {
 			const state = entry.state === "running" ? "thinking" : ITEM_GLYPH[entry.state];
 			rows.push(
@@ -424,7 +422,7 @@ export class OrchestraStage implements StageOrchestra {
 					agent: "cond",
 					agentToken: "accent",
 					model: this.#sources.conductorLabel(),
-					tokPerSec: this.#tokPerSec("conductor"),
+					tokPerSec: this.#tokPerSec("conductor", now),
 					state: this.#sources.conductorStreaming() ? "R" : "S",
 					time: formatElapsed(now - this.#ctx.startedAt),
 				},
@@ -434,7 +432,7 @@ export class OrchestraStage implements StageOrchestra {
 					agent: e.name.length > 10 ? e.name.slice(0, 10) : e.name,
 					agentToken: this.#itemToken(e.item.id),
 					model: shortModel(e.assignment.selector),
-					tokPerSec: e.workerId && e.state === "running" ? this.#tokPerSec(e.workerId) : undefined,
+					tokPerSec: e.workerId && e.state === "running" ? this.#tokPerSec(e.workerId, now) : undefined,
 					state: e.state === "running" ? "R" : e.state === "waiting" ? "Q" : e.state === "done" ? "Z" : "X",
 					time: e.startedAt !== undefined ? formatElapsed((e.endedAt ?? now) - e.startedAt) : undefined,
 				});
