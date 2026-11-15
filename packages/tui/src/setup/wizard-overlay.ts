@@ -2,12 +2,12 @@ import { type Component, type OverlayFocusOwner } from "../tui";
 import { formatKeyHint } from "../app-keybindings";
 import { editorKey, editorKeys } from "../chrome/keybinding-hints";
 import { matchesKey } from "../keys";
-import { centerLine, padding } from "../utils";
+import { padding } from "../utils";
 import { padToWidth } from "../render/utils";
 import { routeSgrMouseInput, type SgrMouseEvent } from "../mouse";
 import { APP_NAME } from "@oh-my-pi/pi-utils";
-import { gradientLogo, PI_LOGO } from "../prompt/welcome";
 import { theme } from "../theme/theme";
+import { GK_WORDMARK, gk, hintBar, paintPage, panel, spread, wordmarkLines } from "./scenes/gk-frame";
 import { col, keyed, node, row, span, text } from "../native/describe";
 import type { DescribeContext, NativeChild, NativeNode, NativeScreen, NativeUiEvent } from "../native/node";
 import { Memo } from "../native/memo";
@@ -26,7 +26,8 @@ import {
 
 type WizardPhase = "splash" | "transition" | "scene" | "outro" | "done";
 
-const SCENE_MARGIN_X = 4;
+/** Columns between the screen edge and the wordmark / scene panel. */
+const PANEL_MARGIN_X = 2;
 const MIN_CONTENT_WIDTH = 20;
 /** Cross-dissolve duration from the splash into the first scene. */
 const SCENE_TRANSITION_MS = 420;
@@ -65,14 +66,14 @@ function stepNode(label: string, position: number, state: StepState): NativeNode
 	);
 }
 
-function sceneFooterHint(): string {
-	const navKeys = editorKeys("tui.select.up", "tui.select.down");
-	return `${navKeys} select · ${editorKey("tui.select.confirm")} confirm · ${editorKey("tui.select.cancel")} skip · ${formatKeyHint("ctrl+c")} exit setup`;
-}
-
-function indentLine(line: string, width: number, indent: number): string {
-	const prefix = padding(Math.min(indent, Math.max(0, width - 1)));
-	return width > 0 ? padToWidth(prefix + line, width) : "";
+/** Scene key hints (≤ 4): navigate, confirm, skip the step, leave setup. */
+function sceneHints(): Array<[string, string]> {
+	return [
+		[editorKeys("tui.select.up", "tui.select.down"), "select"],
+		[editorKey("tui.select.confirm"), "confirm"],
+		[editorKey("tui.select.cancel"), "skip"],
+		[formatKeyHint("ctrl+c"), "exit setup"],
+	];
 }
 /** Stable per-row jitter in [0,1) for the dissolve reveal order. */
 function rowNoise(y: number): number {
@@ -115,6 +116,8 @@ export class SetupWizardComponent implements Component, OverlayFocusOwner {
 	#disposed = false;
 	/** Screen row where the active scene's body began in the last rendered frame. */
 	#bodyRowStart = 0;
+	/** Screen column where the active scene's body began in the last rendered frame. */
+	#bodyColStart = 0;
 	#sceneFocusTarget: Component | undefined;
 
 	constructor(
@@ -192,7 +195,7 @@ export class SetupWizardComponent implements Component, OverlayFocusOwner {
 	 * Mouse handling for the fullscreen wizard (SGR tracking is on while the
 	 * overlay holds the alternate screen). The frame paints from screen row 0,
 	 * so report coordinates index directly into the last rendered lines: scene
-	 * body rows start at #bodyRowStart, indented by SCENE_MARGIN_X. Scenes
+	 * body rows start at #bodyRowStart and column #bodyColStart (inside the panel). Scenes
 	 * that implement routeMouse get hit-tested events (wheel, hover, click);
 	 * for the rest a wheel notch falls back to an arrow key. A left click
 	 * advances the splash/outro like Enter. Raw reports never reach scene
@@ -208,7 +211,7 @@ export class SetupWizardComponent implements Component, OverlayFocusOwner {
 		const scene = this.#activeScene;
 		if (!scene) return;
 		if (scene.routeMouse) {
-			scene.routeMouse(event, event.row - this.#bodyRowStart, event.col - SCENE_MARGIN_X);
+			scene.routeMouse(event, event.row - this.#bodyRowStart, event.col - this.#bodyColStart);
 			return;
 		}
 		if (event.wheel !== null) {
@@ -399,36 +402,46 @@ export class SetupWizardComponent implements Component, OverlayFocusOwner {
 		return this.#outroModel ?? undefined;
 	}
 
+	/**
+	 * gk-night scene page: stepper left and `setup · step N of M` right on row 0, the gold wordmark, the scene in a
+	 * light-box panel (title in its top edge, subtitle first), and the key-hint bar on the last row.
+	 */
 	#renderScene(width: number, height: number): string[] {
 		const scene = this.scenes[this.#sceneIndex];
 		const title = this.#activeScene?.title ?? scene?.title ?? "Setup";
 		const subtitle = this.#activeScene?.subtitle;
 		const { scenes: steps, current } = this.#steps();
-		const contentWidth = Math.max(MIN_CONTENT_WIDTH, width - SCENE_MARGIN_X * 2);
-		const logo = gradientLogo(PI_LOGO, 0);
-		const header = [
-			"",
-			...logo.map(line => centerLine(line, width)),
-			centerLine(theme.bold(theme.fg("accent", APP_NAME)), width),
-			centerLine(theme.fg("muted", `Setup step ${current + 1} of ${steps.length}`), width),
-			"",
-			indentLine(theme.bold(title), width, SCENE_MARGIN_X),
-		];
-		if (subtitle) {
-			header.push(indentLine(theme.fg("muted", subtitle), width, SCENE_MARGIN_X));
-		}
-		header.push("");
-		this.#bodyRowStart = header.length;
+		const stepper = steps
+			.map((step, index) =>
+				index < current
+					? gk("success", `✓ ${step.step}`)
+					: index === current
+						? gk("accent", `● ${step.step}`)
+						: gk("muted", `○ ${step.step}`),
+			)
+			.join(gk("border", "  "));
+		const counter = `${gk("muted", "setup")}${gk("dim", " · ")}${gk("text", `step ${current + 1} of ${steps.length}`)} `;
+		const lines = [spread(` ${stepper}`, counter, width)];
+		const mark = height >= 20 ? wordmarkLines(width - PANEL_MARGIN_X) : [gk("accent", `</> ${GK_WORDMARK}`)];
+		for (const line of mark) lines.push(`${padding(PANEL_MARGIN_X)}${line}`);
+		lines.push("");
 
-		const footer = ["", centerLine(theme.fg("dim", sceneFooterHint()), width)];
-		const maxBodyLines = Math.max(0, height - header.length - footer.length);
-		const body = this.#activeScene?.render(contentWidth, maxBodyLines).slice(0, maxBodyLines) ?? [];
-		const lines = [...header, ...body.map(line => indentLine(line, width, SCENE_MARGIN_X))];
-		while (lines.length + footer.length < height) {
-			lines.push("");
+		const panelWidth = Math.max(MIN_CONTENT_WIDTH + 4, width - PANEL_MARGIN_X * 2);
+		const panelTop = lines.length;
+		const panelHeight = Math.max(3, height - panelTop - 1);
+		const innerWidth = panelWidth - 4;
+		const head = subtitle ? [theme.fg("muted", subtitle), ""] : [];
+		this.#bodyRowStart = panelTop + 1 + head.length;
+		this.#bodyColStart = PANEL_MARGIN_X + 2;
+		const maxBodyLines = Math.max(0, panelHeight - 2 - head.length);
+		const body = this.#activeScene?.render(innerWidth, maxBodyLines).slice(0, maxBodyLines) ?? [];
+		for (const line of panel(title, [...head, ...body], panelWidth, panelHeight)) {
+			lines.push(`${padding(PANEL_MARGIN_X)}${line}`);
 		}
-		lines.push(...footer);
-		return lines;
+		lines.length = Math.min(lines.length, height - 1);
+		while (lines.length < height - 1) lines.push("");
+		lines.push(hintBar(sceneHints(), width));
+		return paintPage(lines, width, height, new Set([height - 1]));
 	}
 
 	#fitToScreen(lines: string[], width: number, height: number): string[] {

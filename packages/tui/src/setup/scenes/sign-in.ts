@@ -4,10 +4,8 @@ import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
 import type { OAuthProvider } from "@oh-my-pi/pi-ai/oauth/types";
 import type { TspText } from "@oh-my-pi/pi-wire";
 import { getAgentDbPath } from "@oh-my-pi/pi-utils";
-import { Container } from "../../tui";
-import { Spacer } from "../../components/spacer";
-import { Text } from "../../components/text";
-import { WizardStep } from "../../components/wizard-step";
+import { isNativeRendering } from "../../native/state";
+import { GroupedProviderList } from "./provider-groups";
 import { editorKey } from "../../chrome/keybinding-hints";
 import { type SgrMouseEvent } from "../../mouse";
 import { wrapTextWithAnsi } from "../../utils";
@@ -62,7 +60,8 @@ export class SignInScene implements SetupSceneController {
 	#signedIn = false;
 	/** Aborts a running login when the scene goes away. */
 	#lifetime = new AbortController();
-	#step: WizardStep | undefined;
+	/** Cell-grid provider list, grouped by sign-in kind. */
+	#list: GroupedProviderList;
 	#native = new Memo();
 
 	readonly #host: SetupSceneHost;
@@ -83,6 +82,20 @@ export class SignInScene implements SetupSceneController {
 				sheet: this.#sheet(),
 			},
 		);
+		const disabled = new Set(this.#host.ctx.disabledProviders);
+		// Same entries the `/login` selector lists: hide a login whose own or target provider is disabled.
+		const providers = getOAuthProviders().filter(
+			provider =>
+				!disabled.has(provider.id) && !(provider.storeCredentialsAs && disabled.has(provider.storeCredentialsAs)),
+		);
+		this.#list = new GroupedProviderList(
+			providers,
+			this.#authStorage.keys,
+			providerId => {
+				void this.#login(providerId);
+			},
+			() => this.#host.finish(this.#signedIn ? "done" : "skipped"),
+		);
 	}
 
 	dispose(): void {
@@ -93,7 +106,6 @@ export class SignInScene implements SetupSceneController {
 
 	invalidate(): void {
 		this.#native.clear();
-		this.#step?.invalidate();
 		this.#selector.invalidate();
 		this.#dialog?.invalidate();
 	}
@@ -103,13 +115,15 @@ export class SignInScene implements SetupSceneController {
 			this.#dialog.handleInput(data);
 			return;
 		}
-		this.#selector.handleInput(data);
+		// A TSP terminal draws the selector's picker sheet; the cell grid draws the grouped list.
+		if (isNativeRendering()) this.#selector.handleInput(data);
+		else this.#list.handleInput(data);
 	}
 
-	/** Forward mouse to the provider selector; the login dialog takes keys only. */
+	/** Forward mouse to the grouped provider list; the login dialog takes keys only. */
 	routeMouse(event: SgrMouseEvent, line: number, col: number): void {
 		if (this.#dialog) return;
-		this.#step?.routeMouse(event, line, col);
+		this.#list.routeMouse(event, line, col);
 	}
 
 	render(width: number, maxLines?: number): readonly string[] {
@@ -122,33 +136,11 @@ export class SignInScene implements SetupSceneController {
 			const head = maxLines >= DIALOG_HEAD_ROWS * 2 ? DIALOG_HEAD_ROWS : 0;
 			return [...lines.slice(0, head), ...lines.slice(lines.length - (maxLines - head))];
 		}
-		// Hint + blank cost two rows; the wizard subtitle already explains
-		// this panel, so on short screens the rows go to the provider list
-		// instead (17 = full selector: 4 chrome above, 10 rows, 3 below).
-		let intro: Container | undefined;
-		if (maxLines === undefined || maxLines >= 17 + 2) {
-			intro = new Container();
-			intro.addChild(new Text(theme.fg("muted", LIST_LEAD), 0, 0));
-			intro.addChild(new Spacer(1));
-		}
-		const status = new Container();
-		for (const line of this.#statusLines()) {
-			for (const wrapped of wrapTextWithAnsi(theme.fg(line.color, line.text), width)) {
-				status.addChild(new Text(wrapped, 0, 0));
-			}
-		}
-		this.#step ??= new WizardStep({
-			kind: "choice",
-			content: this.#selector,
-			gap: 0,
-			fitContent: budget => {
-				if (budget !== undefined) this.#selector.setMaxHeight(budget);
-			},
-		});
-		this.#step.setIntro(intro);
-		this.#step.setStatus(status);
-		this.#step.setMaxHeight(maxLines);
-		return this.#step.render(width);
+		const status = this.#statusLines().flatMap(line => wrapTextWithAnsi(theme.fg(line.color, line.text), width));
+		const listLines =
+			maxLines === undefined ? undefined : Math.max(3, maxLines - (status.length ? status.length + 1 : 0));
+		const list = this.#list.render(width, listLines);
+		return status.length ? [...list, "", ...status] : list;
 	}
 
 	/**

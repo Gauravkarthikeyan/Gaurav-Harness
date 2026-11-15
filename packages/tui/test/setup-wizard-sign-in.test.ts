@@ -8,6 +8,7 @@ import { initTheme } from "@oh-my-pi/pi-tui/theme";
 import { type Component, TUI } from "@oh-my-pi/pi-tui";
 import { Input } from "@oh-my-pi/pi-tui/components/input";
 import type { DescribeContext, NativeNode } from "@oh-my-pi/pi-tui/native/node";
+import { setNativeRendering } from "@oh-my-pi/pi-tui/native/state";
 import { SetupWizardComponent } from "@oh-my-pi/pi-tui/setup/wizard-overlay";
 import { withoutTerminalMultiplexer } from "./helpers/terminal-multiplexer";
 import { VirtualRenderScheduler } from "./virtual-render-scheduler";
@@ -33,9 +34,9 @@ const pickerCx: DescribeContext = {
 
 type Login = (provider: OAuthProviderId, callbacks: OAuthLoginCallbacks) => Promise<void>;
 
-/** A scene host over a credential store where a finished `login` signs the provider in. */
-function sceneHost(login: Login) {
-	const signedIn = new Set<string>();
+/** A scene host over a credential store where a finished `login` signs the provider in; `connected` start signed in. */
+function sceneHost(login: Login, connected: readonly string[] = []) {
+	const signedIn = new Set<string>(connected);
 	const state = {
 		focus: undefined as (Component & { pasteText?(text: string): void }) | undefined,
 		finished: [] as string[],
@@ -122,6 +123,8 @@ describe("SignInScene", () => {
 			callbacks.onAuth({ url: "https://example.com/oauth/authorize?state=ok" });
 		});
 		const scene = new SignInScene(host);
+		// The picker sheet owns keys under a TSP renderer; the cell grid's grouped list is covered below.
+		setNativeRendering(true);
 		try {
 			expect(providerSheet(scene)?.props.items?.find(item => item.id === "anthropic")?.dot).toBe("muted");
 			signInTo(scene, "anthropic");
@@ -131,6 +134,50 @@ describe("SignInScene", () => {
 			const sheet = providerSheet(scene)!;
 			expect(sheet.props.selected).toBe("anthropic");
 			expect(sheet.props.items?.find(item => item.id === "anthropic")?.dot).toBe("success");
+		} finally {
+			setNativeRendering(false);
+			scene.dispose();
+		}
+	});
+
+	it("lists providers grouped by sign-in kind with a dot on connected ones", () => {
+		const { host } = sceneHost(async () => {}, ["anthropic"]);
+		const scene = new SignInScene(host);
+		try {
+			const lines = scene.render(120, 200).map(line => Bun.stripANSI(line));
+			const heading = (label: string) => lines.findIndex(line => line.startsWith(label));
+			const [oauth, keys, local] = [heading("OAUTH SUBSCRIPTIONS"), heading("API KEYS"), heading("LOCAL")];
+			expect(oauth).toBeGreaterThan(0);
+			expect(keys).toBeGreaterThan(oauth);
+			expect(local).toBeGreaterThan(keys);
+			const row = (name: string) => lines.findIndex(line => line.includes(name));
+			expect(row("Anthropic")).toBeGreaterThan(oauth);
+			expect(row("Anthropic")).toBeLessThan(keys);
+			expect(row("DeepSeek")).toBeGreaterThan(keys);
+			expect(row("DeepSeek")).toBeLessThan(local);
+			expect(row("LM Studio")).toBeGreaterThan(local);
+			expect(lines[row("Anthropic")]).toContain("● Anthropic");
+			expect(lines[row("Anthropic")]).toContain("connected · login");
+			expect(lines[row("DeepSeek")]).toContain("○ DeepSeek");
+		} finally {
+			scene.dispose();
+		}
+	});
+
+	it("typing filters the grouped list and Esc clears the filter before leaving", () => {
+		const { host, state } = sceneHost(async () => {});
+		const scene = new SignInScene(host);
+		try {
+			for (const char of "deepseek") scene.handleInput(char);
+			const lines = scene.render(120, 40).map(line => Bun.stripANSI(line));
+			expect(lines[0]).toContain("/ deepseek");
+			expect(lines.some(line => line.includes("DeepSeek"))).toBe(true);
+			expect(lines.some(line => line.includes("Anthropic"))).toBe(false);
+			scene.handleInput("\x1b");
+			expect(state.finished).toEqual([]);
+			expect(scene.render(120, 40).some(line => Bun.stripANSI(line).includes("Anthropic"))).toBe(true);
+			scene.handleInput("\x1b");
+			expect(state.finished).toEqual(["skipped"]);
 		} finally {
 			scene.dispose();
 		}

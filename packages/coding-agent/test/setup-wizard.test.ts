@@ -352,10 +352,11 @@ describe("setup wizard mouse routing", () => {
 			void component.run();
 			component.handleInput("\r"); // splash → scene
 			await Bun.sleep(500); // let the splash→scene dissolve (420ms) finish so the frame is the scene
-			const frame = component.render(80);
+			const frame = component.render(80).map(line => Bun.stripANSI(line));
 			const row = frame.findIndex(line => line.includes("MARKER-ROW"));
 			expect(row).toBeGreaterThan(0);
-			const indent = /^ */.exec(frame[row])?.[0].length ?? 0;
+			// The body sits inside the scene panel: its column is where the marker text starts.
+			const indent = frame[row].indexOf("MARKER-ROW");
 			expect(indent).toBeGreaterThan(0);
 			// SGR reports are 1-based; two columns into the marker text.
 			component.handleInput(`\x1b[<35;${indent + 3};${row + 1}M`);
@@ -436,7 +437,8 @@ describe("setup wizard short terminals", () => {
 		try {
 			const frame = component.render(80).map(line => Bun.stripANSI(line));
 			expect(frame.length).toBe(24);
-			expect(frame.some(line => line.trimStart().startsWith(theme.nav.cursor))).toBe(true);
+			// Rows sit inside the scene panel: drop its left edge before checking for the cursor.
+			expect(frame.some(line => line.replace(/^\s*│\s*/, "").startsWith(theme.nav.cursor))).toBe(true);
 			for (const label of ["Match terminal", "GK Night", "GK Day", "Colorblind colors", "ANSI-safe", "Browse all"]) {
 				expect(frame.some(line => line.includes(label))).toBe(true);
 			}

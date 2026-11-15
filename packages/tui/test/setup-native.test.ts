@@ -183,7 +183,7 @@ describe("setup surfaces under native rendering", () => {
 		try {
 			wizard.handleInput("\r");
 			advance(1000);
-			expect(wizard.render(80).some(line => line.includes("Setup step 1 of 2"))).toBe(true);
+			expect(wizard.render(80).some(line => Bun.stripANSI(line).includes("setup · step 1 of 2"))).toBe(true);
 			first.hosts[0]?.finish("done");
 			expect(ansi.hosts).toHaveLength(1);
 		} finally {

@@ -1,12 +1,12 @@
-import { centerLine } from "../../utils";
-import { padToWidth } from "../../render/utils";
 import { APP_NAME } from "@oh-my-pi/pi-utils";
-import { gradientLogo, PI_LOGO } from "../../prompt/welcome";
-import { theme } from "../../theme/theme";
 import { col, compact, keyed, node, span, text } from "../../native/describe";
 import type { NativeNode } from "../../native/node";
 import { Memo } from "../../native/memo";
-import { renderStarfield, SETUP_TICK_MS } from "./splash";
+import { detectColorMode } from "../../theme/color";
+import { GK_NIGHT } from "../../theme/gk-palette";
+import { Canvas } from "../../gk/canvas";
+import { drawLogo, logoLayout } from "../../gk/logo";
+import { paintPage } from "./gk-frame";
 
 export const SETUP_OUTRO_MS = 1200;
 
@@ -45,19 +45,19 @@ export function describeSetupOutro(model: string | undefined): NativeNode {
 	);
 }
 
+/** gk-night outro: the lockup, `✓ setup saved`, and a one-pass progress bar (accent share, border rest). */
 export function renderSetupOutro(width: number, height: number, elapsedMs: number): string[] {
-	const frame = Math.floor(elapsedMs / SETUP_TICK_MS);
-	const lines = renderStarfield(width, height, frame + 1000);
-	const progress = Math.max(0, Math.min(1, elapsedMs / SETUP_OUTRO_MS));
-	const logo = gradientLogo(PI_LOGO, progress * 1.2, { pos: (progress * 2) % 1, strength: 1 - progress });
-	const title = theme.bold(theme.fg("success", `${theme.status.success} Setup saved`));
-	const subtitle = theme.fg("muted", "Handing off to the normal CLI…");
-	const sweepWidth = Math.max(1, Math.min(width - 8, Math.floor((width - 8) * progress)));
-	const sweep = `${theme.fg("accent", "━".repeat(sweepWidth))}${theme.fg("dim", "─".repeat(Math.max(0, width - 8 - sweepWidth)))}`;
-	const content = [...logo, "", title, subtitle, "", sweep];
-	const start = Math.max(0, Math.floor((height - content.length) / 2));
-	for (let i = 0; i < content.length && start + i < lines.length; i++) {
-		lines[start + i] = centerLine(content[i] ?? "", width);
-	}
-	return lines.map(line => (width > 0 ? padToWidth(line, width) : ""));
+	const canvas = new Canvas(width, height, GK_NIGHT.paneBg, detectColorMode());
+	const layout = logoLayout(width);
+	const top = Math.max(0, Math.floor((height - layout.rows - 5) / 2));
+	drawLogo(canvas, top, layout, GK_NIGHT);
+	const y = top + layout.rows + 1;
+	canvas.center(y, "✓ setup saved", GK_NIGHT.success);
+	canvas.center(y + 1, `starting ${APP_NAME}…`, GK_NIGHT.muted);
+	const barWidth = Math.max(1, Math.min(72, width - 8));
+	const filled = Math.round(barWidth * Math.max(0, Math.min(1, elapsedMs / SETUP_OUTRO_MS)));
+	const left = Math.floor((width - barWidth) / 2);
+	canvas.put(left, y + 3, "━".repeat(filled), GK_NIGHT.accent);
+	canvas.put(left + filled, y + 3, "─".repeat(barWidth - filled), GK_NIGHT.border);
+	return paintPage(canvas.lines(), width, height);
 }
