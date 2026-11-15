@@ -81,6 +81,9 @@ export const launchHelp = {
 		}),
 		"no-lsp": Flags.boolean({ description: "Disable LSP tools, formatting, and diagnostics" }),
 		"no-pty": Flags.boolean({ description: "Disable PTY-based interactive bash execution" }),
+		// gk: launch mode flags
+		solo: Flags.boolean({ description: "Start in Solo mode (skips the mode picker)" }),
+		orchestra: Flags.boolean({ description: "Start in Orchestra mode (skips the mode picker)" }),
 		tools: Flags.string({
 			description:
 				"Comma-separated built-in or extension tool names to enable (default: tools enabled in settings; see Built-in Tools)",

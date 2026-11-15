@@ -29,7 +29,6 @@ import { cfgDisabledProviders, cfgModelRoleStorage } from "../config/model-setti
 
 export { ALL_SCENES, CURRENT_SETUP_VERSION, setupWizardAllowed };
 export type { SetupScene, SetupSceneHost } from "@oh-my-pi/pi-tui/setup/scenes/types";
-export { runStartupSplash } from "@oh-my-pi/pi-tui/setup/startup-splash";
 
 /** Bind application preferences and runtime effects to the setup presentation. */
 export function createSetupHost(ctx: InteractiveModeContext): SetupHost {

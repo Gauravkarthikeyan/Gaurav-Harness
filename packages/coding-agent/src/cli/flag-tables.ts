@@ -362,6 +362,8 @@ export const VALUELESS_FLAGS: ReadonlySet<string> = new Set([
 	"--no-spotlight",
 	"--offline",
 	"--no-lsp",
+	"--solo", // gk: launch mode flags
+	"--orchestra", // gk: launch mode flags
 	"--no-pty",
 	"--hide-thinking",
 	"--advisor",

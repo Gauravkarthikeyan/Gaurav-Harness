@@ -202,6 +202,9 @@ import { cfgSkillsIncludeSkills } from "./extensibility/settings";
 import { cfgWorkspaceAdditionalDirectories } from "./session/context-settings";
 import { formatGkVersion, GK_VERSION } from "./gk/brand"; // gk: version string
 import { takeOmpImportNotice } from "./gk/import-omp"; // gk: first-run omp profile import notice
+import { ORCHESTRA_NOT_WIRED, runGkLaunch } from "./gk/launch"; // gk: splash v2 + mode picker
+import { type LaunchModeResolution, resolveLaunchMode } from "./gk/launch-mode"; // gk: launch mode
+import { cfgGkLastLaunchMode, cfgGkLaunchMode } from "./gk/settings"; // gk: launch mode
 
 type RunAcpMode = (createSession: AcpSessionFactory) => Promise<never>;
 type RunPrintMode = (session: AgentSession, options: PrintModeOptions) => Promise<number>;
@@ -651,6 +654,7 @@ async function runInteractiveMode(
 	startupLease?: ComposerLease,
 	startupGoal?: string,
 	startupRestore?: () => Promise<RestoreOutcome>,
+	launchResolution: LaunchModeResolution = { kind: "mode", mode: "solo" }, // gk: launch mode
 ): Promise<void> {
 	const InteractiveModeConstructor = await loadInteractiveModeConstructor();
 	let mode: InteractiveMode;
@@ -678,13 +682,11 @@ async function runInteractiveMode(
 		// Cold-launch gate: the full setup wizard (every scene + the overlay and
 		// their TUI/OAuth/search/theme deps) is heavy, yet the common case only needs
 		// to know whether the stored setup version is current. Lazy-load the wizard
-		// barrel only when setup is stale, forced, or the explicit startup splash
-		// setting needs the shared setup splash renderer.
+		// barrel only when setup is stale or forced.
+		// gk: the GK splash lives in gk/launch, so `startup.showSplash` no longer pulls in the setup barrel.
 		const storedSetupVersion = cfgSetupVersion.get(settings);
 		setupWizard =
-			forceSetupWizard || storedSetupVersion < CURRENT_SETUP_VERSION || showStartupSplash
-				? await import("./modes/setup")
-				: undefined;
+			forceSetupWizard || storedSetupVersion < CURRENT_SETUP_VERSION ? await import("./modes/setup") : undefined;
 		const setupOptions = {
 			resuming,
 			isTTY: process.stdin.isTTY && process.stdout.isTTY,
@@ -718,19 +720,34 @@ async function runInteractiveMode(
 				// async git check, so a folder where the question never shows also keeps `idle`.
 				startupRun:
 					setupScenes.length === 0 &&
+					launchResolution.kind !== "ask" && // gk: the mode picker waits on the user too
 					!(offersStartupWorktree && mode.mayAskForStartupWorktree()) &&
 					(startupGoal !== undefined || initialMessage !== undefined || initialMessages.length > 0),
 			}),
 		);
 		startDeferredStartupWork?.(mode);
 
-		if (setupWizard && playStartupSplash) {
-			await setupWizard.runStartupSplash(mode);
-		}
-
 		if (setupWizard && setupScenes.length > 0) {
 			await setupWizard.runSetupWizard(mode, setupScenes);
 		}
+
+		// gk: GK splash (live startup checks) replaces omp's starfield splash, then the mode picker.
+		const launched = await runGkLaunch(
+			mode,
+			{
+				settings,
+				modelRegistry: session.modelRegistry,
+				defaultModel: session.model ? `${session.model.provider}/${session.model.id}` : undefined,
+				skillCount: session.skills.length,
+				mcpManager,
+			},
+			{ resolution: launchResolution, splash: playStartupSplash },
+		);
+		if (launched.kind === "quit") {
+			await mode.shutdown({ cancellable: false });
+			return;
+		}
+		if (launched.mode === "orchestra") notifs.push({ kind: "warn", message: ORCHESTRA_NOT_WIRED });
 
 		// Consume failures immediately, but defer any banner until the transcript is stable.
 		const checkedVersionPromise = versionCheckPromise.catch(() => undefined);
@@ -2598,6 +2615,20 @@ export async function runRootCommand(
 				stdinIsTTY: process.stdin.isTTY,
 				stdoutIsTTY: process.stdout.isTTY,
 			});
+			// gk: --solo/--orchestra > gk.launchMode; `ask` shows the mode picker on fresh interactive TTY launches.
+			const launchResolution = resolveLaunchMode({
+				soloFlag: parsedArgs.solo,
+				orchestraFlag: parsedArgs.orchestra,
+				setting: cfgGkLaunchMode.get(settingsInstance),
+				last: cfgGkLastLaunchMode.get(settingsInstance),
+				canAsk:
+					isInteractive &&
+					process.stdin.isTTY === true &&
+					process.stdout.isTTY === true &&
+					!$env.PI_TIMING &&
+					parsedArgs.join === undefined &&
+					!(parsedArgs.continue || parsedArgs.resume || parsedArgs.fork || parsedArgs.restore || foreignSource),
+			});
 
 			// Read the changelog marker once, before the post-paint changelog step in
 			// `startDeferredStartupWork` advances it; the first-launch eval warning judges
@@ -2899,6 +2930,7 @@ export async function runRootCommand(
 						startupLease,
 						initialArgs.goal,
 						parsedArgs.restore ? () => restoreSession(session, { eventBus, subagentEventBus }) : undefined,
+						launchResolution, // gk: launch mode
 					);
 				} finally {
 					startupLease?.dispose();

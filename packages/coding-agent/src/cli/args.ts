@@ -81,6 +81,9 @@ export interface Args {
 	tools?: string[];
 	noTools?: boolean;
 	noLsp?: boolean;
+	/** gk: `--solo` / `--orchestra` start in that mode and skip the mode picker. */
+	solo?: boolean;
+	orchestra?: boolean;
 	noPty?: boolean;
 	noJudge?: boolean;
 	noSpotlight?: boolean;
@@ -369,6 +372,10 @@ export function parseArgs(inputArgs: string[], extensionFlags?: Map<string, { ty
 			result.noTools = true;
 		} else if (arg === "--no-lsp") {
 			result.noLsp = true;
+		} else if (arg === "--solo") {
+			result.solo = true; // gk: launch mode flags
+		} else if (arg === "--orchestra") {
+			result.orchestra = true; // gk: launch mode flags
 		} else if (arg === "--no-pty") {
 			result.noPty = true;
 		} else if (arg === "--no-judge") {
@@ -462,6 +469,9 @@ export function parseArgs(inputArgs: string[], extensionFlags?: Map<string, { ty
 
 	if (result.systemPrompt !== undefined && result.systemPromptTemplate !== undefined) {
 		throw new CliUsageError("--system-prompt and --system-prompt-template cannot be combined");
+	}
+	if (result.solo && result.orchestra) {
+		throw new CliUsageError("--solo and --orchestra cannot be combined"); // gk: launch mode flags
 	}
 	return result;
 }
