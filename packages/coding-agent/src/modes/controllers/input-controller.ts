@@ -95,6 +95,7 @@ import {
 	cfgTuiMouse,
 } from "../settings";
 import { cfgHideThinkingBlock } from "../../session/settings";
+import { showCommandPalette } from "../../gk/ui/command-palette"; // gk: Ctrl+K palette
 
 /** Bare words that quit (as `/<word>`) when typed alone into a session with no messages. */
 const BARE_EXIT_WORDS: Record<string, true> = { exit: true, quit: true, q: true };
@@ -427,6 +428,13 @@ export class InputController {
 				if (this.ctx.keybindings.matches(data, "app.thinking.toggle")) {
 					if (this.ctx.ui.hasOverlay()) return undefined;
 					this.ctx.toggleThinkingBlockVisibility();
+					return { consume: true };
+				}
+				// gk: Ctrl+K opens the palette from an empty composer; with text it stays kill-line.
+				if (this.ctx.keybindings.matches(data, "app.gk.palette")) {
+					if (this.ctx.ui.hasOverlay() || this.ctx.ui.getFocused() !== this.ctx.editor) return undefined;
+					if (this.ctx.editor.getText().length > 0) return undefined;
+					void showCommandPalette(this.ctx);
 					return { consume: true };
 				}
 				if (this.ctx.keybindings.matches(data, "app.history.search")) {

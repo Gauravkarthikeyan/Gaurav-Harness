@@ -71,6 +71,7 @@ interface AppKeybindings {
 	"app.stt.pushToTalk": true;
 	"app.stt.toggle": true;
 	"app.live.toggle": true;
+	"app.gk.palette": true; // gk: Ctrl+K command palette
 }
 
 /** Application action identifier registered alongside the base TUI keybindings. */
@@ -292,6 +293,12 @@ export const KEYBINDINGS = {
 	"app.live.toggle": {
 		defaultKeys: "ctrl+l",
 		description: "Start or stop live voice mode (/live)",
+	},
+	// gk: Ctrl+K palette. Shares the key with `tui.editor.deleteToLineEnd`; it takes the key only while the
+	// composer is empty, so kill-line keeps working on text.
+	"app.gk.palette": {
+		defaultKeys: "ctrl+k",
+		description: "Open the command palette (empty composer)",
 	},
 } as const satisfies KeybindingDefinitions;
 
