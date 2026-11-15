@@ -65,7 +65,7 @@ describe("a plugin upgrade that replaces the plugin's version directory under a 
 		process.env.HOME = tempHomeDir;
 		// Discovery reads `os.homedir()` and the agent dir; left alone they scan the real user's plugins and skills.
 		vi.spyOn(os, "homedir").mockReturnValue(tempHomeDir);
-		setAgentDir(path.join(tempHomeDir, ".omp", "agent"));
+		setAgentDir(path.join(tempHomeDir, ".gk", "agent"));
 		installPluginVersion("1.0.0");
 	});
 
@@ -82,16 +82,16 @@ describe("a plugin upgrade that replaces the plugin's version directory under a 
 	});
 
 	function pluginDir(version: string): string {
-		return path.join(tempHomeDir, ".omp", "plugins", "cache", "plugins", `market___upgrade-plugin___${version}`);
+		return path.join(tempHomeDir, ".gk", "plugins", "cache", "plugins", `market___upgrade-plugin___${version}`);
 	}
 
 	function userRegistryPath(): string {
-		return path.join(tempHomeDir, ".omp", "plugins", "installed_plugins.json");
+		return path.join(tempHomeDir, ".gk", "plugins", "installed_plugins.json");
 	}
 
 	/** The project-scope registry of a session whose cwd is `tempDir`. */
 	function projectRegistryPath(): string {
-		return path.join(tempDir, ".omp", "plugins", "installed_plugins.json");
+		return path.join(tempDir, ".gk", "plugins", "installed_plugins.json");
 	}
 
 	function writePluginVersion(version: string): void {
@@ -137,7 +137,7 @@ describe("a plugin upgrade that replaces the plugin's version directory under a 
 	}
 
 	function otherPluginDir(): string {
-		return path.join(tempHomeDir, ".omp", "plugins", "cache", "plugins", "market___other-plugin___1.0.0");
+		return path.join(tempHomeDir, ".gk", "plugins", "cache", "plugins", "market___other-plugin___1.0.0");
 	}
 
 	/**
@@ -167,7 +167,7 @@ describe("a plugin upgrade that replaces the plugin's version directory under a 
 
 	/** A project skill at `<cwd>/.omp/skills/<name>/SKILL.md`. */
 	function writeProjectSkill(cwd: string, name: string, body: string): void {
-		const skillDir = path.join(cwd, ".omp", "skills", name);
+		const skillDir = path.join(cwd, ".gk", "skills", name);
 		fs.mkdirSync(skillDir, { recursive: true });
 		fs.writeFileSync(
 			path.join(skillDir, "SKILL.md"),
