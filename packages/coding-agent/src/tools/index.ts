@@ -18,6 +18,7 @@ import type {
 } from "../extensibility/extensions/types";
 import type { Skill, SkillRediscoveryHost } from "../extensibility/skills";
 import type { GoalModeState, GoalRuntime } from "../goals";
+import { AskConductorTool } from "../gk/ask-conductor-tool"; // gk: Orchestra crew advisor channel
 import { GoalTool } from "../goals/tools/goal-tool";
 import type { HindsightSessionState } from "../hindsight/state";
 import type { LocalProtocolOptions } from "../internal-urls";
@@ -324,6 +325,8 @@ export interface ToolSession {
 	lspReadOnly?: boolean;
 	/** Whether this invocation may expose IRC. `false` removes it even for subagents. */
 	enableIrc?: boolean;
+	/** gk: registry id of the Orchestra conductor; set only for crew worker sessions, which then get `ask_conductor`. */
+	crewConductorId?: string;
 	/**
 	 * Whether MCP capabilities may be forwarded to child sessions. `false`
 	 * prohibits inherited-manager and process-global MCP fallback.
@@ -647,6 +650,7 @@ export const HIDDEN_TOOLS: Record<HiddenToolName, ToolFactory> = {
 	think: () => new ThinkTool(),
 	yield: s => new YieldTool(s),
 	goal: s => new GoalTool(s),
+	ask_conductor: s => new AskConductorTool(s), // gk: Orchestra crew advisor channel
 };
 
 export type ToolName = BuiltinToolName;
@@ -688,6 +692,11 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 	const goalModeActive = !restrictToolNames && goalEnabled && session.getGoalModeState?.()?.enabled === true;
 	const externalThinkingActive =
 		cfgExternalThinking.get(session.settings) && supportsExternalThinking(session.getActiveModel?.());
+	// gk: crew workers always carry their advisor channel; restricted callers own their list.
+	const crewAdvisor = !restrictToolNames && session.crewConductorId !== undefined;
+	if (crewAdvisor && requestedTools && !requestedTools.includes("ask_conductor")) {
+		requestedTools.push("ask_conductor");
+	}
 	if (goalModeActive && requestedTools && !requestedTools.includes("goal")) {
 		requestedTools.push("goal");
 	}
@@ -817,6 +826,7 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 		if (name === "web_search") return cfgWebSearchEnabled.get(session.settings);
 		if (name === "security_scan") return cfgSecurityEnabled.get(session.settings);
 		if (name === "think") return externalThinkingActive;
+		if (name === "ask_conductor") return crewAdvisor; // gk
 		if (name === "ask") return cfgAskEnabled.get(session.settings);
 		if (name === "context_notes" || name === "new_context")
 			return cfgCompactionExperimentalContextManagement.get(session.settings);
@@ -864,6 +874,7 @@ export async function resolveBuiltinToolPlan(session: ToolSession, toolNames?: s
 		...(externalThinkingActive ? ["think"] : []),
 		...(includeYield ? ["yield"] : []),
 		...(goalModeActive ? ["goal"] : []),
+		...(crewAdvisor ? ["ask_conductor"] : []), // gk
 	];
 	return { requestedTools, names, isAllowed: isToolAllowed };
 }

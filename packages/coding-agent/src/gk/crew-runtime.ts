@@ -1,8 +1,9 @@
 import { logger } from "@oh-my-pi/pi-utils";
-import { AgentRegistry } from "../registry/agent-registry";
+import { AgentRegistry, MAIN_AGENT_ID } from "../registry/agent-registry";
 import { generateTaskName } from "../task/name-generator";
 import type { ToolSession } from "../tools";
 import type { VibeSessionRegistry } from "../vibe/runtime";
+import { answerCrewQuestion } from "./ask-conductor-tool";
 import type { CrewLedger } from "./ledger";
 import type { Assignment, CastResult, WorkItem } from "./router";
 import type { RosterEntry, Tier } from "./types";
@@ -528,11 +529,18 @@ export class CrewRun {
  * first turn's background job; cost/tokens come from the worker session's stats.
  */
 export function createVibeCrewSpawner(registry: VibeSessionRegistry, session: ToolSession): CrewWorkerSpawner {
+	const conductorId = session.getAgentId?.() ?? MAIN_AGENT_ID;
 	return {
 		async spawn({ name, prompt, model }) {
 			const manager = session.asyncJobManager;
 			if (!manager) throw new Error("Crew workers require the background job manager.");
-			const { id, jobId } = await registry.spawn(session, { cli: "good", name, prompt, model });
+			const { id, jobId } = await registry.spawn(session, {
+				cli: "good",
+				name,
+				prompt,
+				model,
+				crewConductorId: conductorId,
+			});
 			// Hold the job object: the manager may evict it after delivery.
 			const job = manager.getJob(jobId);
 			const settled = (job?.promise ?? Promise.resolve()).then((): CrewWorkerResult => {
@@ -547,6 +555,8 @@ export function createVibeCrewSpawner(registry: VibeSessionRegistry, session: To
 			return { workerId: id, settled };
 		},
 		async send(workerId, msg) {
+			// A worker blocked in ask_conductor takes the message as its answer.
+			if (await answerCrewQuestion(conductorId, workerId, msg)) return;
 			await registry.send(session, { session: workerId, message: msg });
 		},
 		async kill(workerId) {

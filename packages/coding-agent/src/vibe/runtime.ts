@@ -144,6 +144,8 @@ interface VibeRecord {
 	modelOverride?: string | string[];
 	/** Pre-expansion role alias behind {@link modelOverride}, when the worker agent named one. */
 	modelRole?: string;
+	/** gk: Orchestra conductor id; a crew worker gets `ask_conductor` routed to it. */
+	crewConductorId?: string;
 	state: VibeSessionState;
 	createdAt: number;
 	lastActivityAt: number;
@@ -809,7 +811,7 @@ export class VibeSessionRegistry {
 	/** Spawn a persistent worker session and start its first turn in the background. */
 	async spawn(
 		session: ToolSession,
-		args: { cli: VibeCli; name?: string; prompt: string; model?: string }, // gk: optional explicit model selector
+		args: { cli: VibeCli; name?: string; prompt: string; model?: string; crewConductorId?: string }, // gk: explicit model selector, crew conductor
 	): Promise<VibeSpawnOutcome> {
 		const scope = this.ownerScope(session);
 		return this.#withTerminationLock(scope, () => this.#spawnLocked(session, scope, args));
@@ -818,7 +820,7 @@ export class VibeSessionRegistry {
 	async #spawnLocked(
 		session: ToolSession,
 		scope: VibeOwnerScope,
-		args: { cli: VibeCli; name?: string; prompt: string; model?: string }, // gk: optional explicit model selector
+		args: { cli: VibeCli; name?: string; prompt: string; model?: string; crewConductorId?: string }, // gk: explicit model selector, crew conductor
 	): Promise<VibeSpawnOutcome> {
 		if (this.#terminatedScopes.has(scopeKey(scope, ""))) {
 			throw new ToolError("Vibe mode has exited; enter Vibe mode again before spawning a worker.");
@@ -848,6 +850,7 @@ export class VibeSessionRegistry {
 			agent,
 			modelOverride,
 			modelRole,
+			crewConductorId: args.crewConductorId, // gk: Orchestra crew advisor channel
 			state: "starting",
 			createdAt,
 			lastActivityAt: createdAt,
@@ -1343,6 +1346,7 @@ export class VibeSessionRegistry {
 				? agentAccountPools[record.agent.name]
 				: undefined,
 			keepAlive: true,
+			crewConductorId: record.crewConductorId, // gk: Orchestra crew advisor channel
 		};
 	}
 

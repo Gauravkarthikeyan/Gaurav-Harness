@@ -527,6 +527,8 @@ export interface ExecutorOptions {
 	maxRuntimeMs?: number;
 	/** Include IRC only when the invocation policy permits collaboration. */
 	enableIrc?: boolean;
+	/** gk: Orchestra conductor id; set only for crew worker sessions, which then get `ask_conductor`. */
+	crewConductorId?: string;
 	enableLsp?: boolean;
 	/**
 	 * Enable MCP capabilities for this child. `false` suppresses both inherited
@@ -5135,6 +5137,7 @@ async function runSubprocessOnThisThread(options: ExecutorOptions): Promise<Sing
 					agentName: agent.name,
 					enableLsp: lspEnabled,
 					enableIrc: options.enableIrc,
+					crewConductorId: options.crewConductorId, // gk: Orchestra crew advisor channel
 					skipPythonPreflight,
 					enableMCP,
 					mcpManager,

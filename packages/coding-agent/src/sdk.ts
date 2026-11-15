@@ -882,6 +882,8 @@ export interface CreateAgentSessionOptions {
 	lspReadOnly?: boolean;
 	/** Whether this invocation may expose IRC. `false` removes it even for subagents. */
 	enableIrc?: boolean;
+	/** gk: Orchestra conductor id; set only for crew worker sessions, which then get `ask_conductor`. */
+	crewConductorId?: string;
 	/** Skip subprocess-kernel availability checks and prelude warmup */
 	skipPythonPreflight?: boolean;
 	/** Tool names explicitly requested (enables disabled-by-default tools) */
@@ -1518,7 +1520,7 @@ const TOOL_DEFINITION_MARKER = Symbol("__isToolDefinition");
 /** Matches the truncation applied to per-server instructions inside `rebuildSystemPrompt`. */
 const MAX_MCP_INSTRUCTIONS_LENGTH = 4000;
 /** Built-ins `createTools` force-includes into explicit tool lists; the active set mirrors them. */
-const SESSION_MANAGED_BUILTIN_TOOL_NAMES = ["manage_skill", "learn", "context_notes", "new_context"];
+const SESSION_MANAGED_BUILTIN_TOOL_NAMES = ["manage_skill", "learn", "context_notes", "new_context", "ask_conductor"]; // gk: ask_conductor
 
 let sshCleanupRegistered = false;
 
@@ -2645,6 +2647,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			enableLsp,
 			lspReadOnly,
 			enableIrc: restrictToolNames ? false : options.enableIrc,
+			crewConductorId: options.crewConductorId, // gk: Orchestra crew advisor channel
 			/**
 			 * Frozen at the last system-prompt rebuild: a mid-session `/skillful`
 			 * toggle rides the next turn's notice, never the tool prefix. The
