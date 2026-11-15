@@ -31,6 +31,7 @@ import {
 	registeredPluginRootOf,
 	scanSkillsFromDir,
 } from "../discovery/helpers";
+import { GK_BUNDLED_SKILLS_PROVIDER_ID } from "../gk/bundled-skills"; // gk: bundled skills
 import { allowsSkillTokens, SKILL_TOKEN_RE } from "@oh-my-pi/pi-tui/prompt/skill-tokens";
 import autoloadTemplate from "../prompts/skills/autoload.md" with { type: "text" };
 import userInvocationTemplate from "../prompts/skills/user-invocation.md" with { type: "text" };
@@ -384,7 +385,9 @@ export async function loadSkills(options: LoadSkillsOptions = {}): Promise<LoadS
 	// apply to the raw name so a namespaced alias cannot bypass them; include
 	// patterns are matched against the final name the user actually sees.
 	const filteredSkills = result.all.filter(capSkill => {
+		// gk: bundled skills resolve dead-last with the managed ones, below.
 		if (capSkill._source.provider === MANAGED_SKILLS_PROVIDER_ID) return false;
+		if (capSkill._source.provider === GK_BUNDLED_SKILLS_PROVIDER_ID) return false;
 		if (disabledSkillNames.has(capSkill.name)) return false;
 		if (!isSourceEnabled(capSkill._source)) return false;
 		return !matchesIgnorePatterns(capSkill.name);
@@ -555,6 +558,8 @@ export async function loadSkills(options: LoadSkillsOptions = {}): Promise<LoadS
 	// Validate the on-disk name (a hand-placed managed file could carry an unsafe
 	// frontmatter name) and re-sanitize the description on read. Descriptions and
 	// names both render unescaped into the system prompt.
+	// gk: bundled skills join managed ones here, after them, under the same veto rules. They count as
+	// native user skills, so `skills.enablePiUser` and `disabledProviders` turn them off.
 	const managedCandidates = result.all.filter(
 		capSkill =>
 			capSkill._source.provider === MANAGED_SKILLS_PROVIDER_ID &&
@@ -563,13 +568,28 @@ export async function loadSkills(options: LoadSkillsOptions = {}): Promise<LoadS
 			!matchesIgnorePatterns(capSkill.name) &&
 			matchesIncludePatterns(capSkill.name),
 	);
+	for (const capSkill of result.all) {
+		if (
+			capSkill._source.provider === GK_BUNDLED_SKILLS_PROVIDER_ID &&
+			enablePiUser &&
+			isUserSourceEnabled(GK_BUNDLED_SKILLS_PROVIDER_ID) &&
+			!disabledSkillNames.has(capSkill.name) &&
+			!matchesIgnorePatterns(capSkill.name) &&
+			matchesIncludePatterns(capSkill.name)
+		) {
+			managedCandidates.push(capSkill);
+		}
+	}
 	// Names claimed by any ENABLED authored skill (from the pre-dedup superset).
 	// Managed defers to these even when capability dedup hid an enabled authored
 	// skill behind a disabled higher-priority one, so managed never masks it.
 	const enabledAuthoredNames = new Set(
 		result.all
 			.filter(
-				capSkill => capSkill._source.provider !== MANAGED_SKILLS_PROVIDER_ID && isSourceEnabled(capSkill._source),
+				capSkill =>
+					capSkill._source.provider !== MANAGED_SKILLS_PROVIDER_ID &&
+					capSkill._source.provider !== GK_BUNDLED_SKILLS_PROVIDER_ID && // gk: bundled skills
+					isSourceEnabled(capSkill._source),
 			)
 			.map(capSkill => capSkill.name),
 	);
@@ -597,7 +617,11 @@ export async function loadSkills(options: LoadSkillsOptions = {}): Promise<LoadS
 			typeof capSkill.frontmatter?.description === "string" ? capSkill.frontmatter.description : "";
 		skillMap.set(capSkill.name, {
 			name: capSkill.name,
-			description: sanitizeManagedDescription(rawDescription),
+			// gk: bundled descriptions are ours; only managed ones need re-sanitizing.
+			description:
+				capSkill._source.provider === MANAGED_SKILLS_PROVIDER_ID
+					? sanitizeManagedDescription(rawDescription)
+					: rawDescription,
 			filePath: capSkill.path,
 			baseDir: capSkill.path.replace(/[\\/]SKILL\.md$/, ""),
 			source: `${capSkill._source.provider}:${capSkill.level}`,

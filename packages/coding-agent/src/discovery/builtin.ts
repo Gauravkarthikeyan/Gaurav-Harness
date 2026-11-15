@@ -23,6 +23,7 @@ import { type SlashCommand, slashCommandCapability } from "../capability/slash-c
 import { type SystemPrompt, systemPromptCapability } from "../capability/system-prompt";
 import { type CustomTool, toolCapability } from "../capability/tool";
 import type { LoadContext, LoadResult } from "../capability/types";
+import { GK_BUNDLED_SKILLS_DIR, GK_BUNDLED_SKILLS_PROVIDER_ID } from "../gk/bundled-skills"; // gk: bundled skills
 import { expandTilde } from "../tools/path-utils";
 import {
 	discoverRuleFromMarkdown,
@@ -364,6 +365,23 @@ registerProvider<Skill>(skillCapability.id, {
 	description: "Auto-generated managed skills from ~/.gk/agent/managed-skills", // gk: debrand
 	priority: MANAGED_SKILLS_PRIORITY,
 	load: loadManagedSkills,
+});
+
+// gk: skills bundled with gk-code (src/gk/skills). Lowest priority, below managed skills; loadSkills
+// resolves them dead-last so any authored skill of the same name replaces the bundled copy.
+const GK_BUNDLED_SKILLS_PRIORITY = 1;
+registerProvider<Skill>(skillCapability.id, {
+	id: GK_BUNDLED_SKILLS_PROVIDER_ID,
+	displayName: "GK Bundled Skills",
+	description: "Skills shipped with gk-code",
+	priority: GK_BUNDLED_SKILLS_PRIORITY,
+	load: ctx =>
+		scanSkillsFromDir(ctx, {
+			dir: GK_BUNDLED_SKILLS_DIR,
+			providerId: GK_BUNDLED_SKILLS_PROVIDER_ID,
+			level: "user",
+			requireDescription: true,
+		}),
 });
 
 // Slash Commands

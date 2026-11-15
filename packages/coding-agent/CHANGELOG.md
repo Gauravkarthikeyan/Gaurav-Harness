@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Bundled skills pack: antislop (6 skills), superpowers 7.0.2 (9 skills), impeccable, animate, break-ui and emil-design-eng ship under `src/gk/skills/` and are discovered with no install step. A user or project skill with the same name replaces the bundled copy.
+
 ## [18.20.1] - 2026-11-14
 
 ### Added
