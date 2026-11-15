@@ -32,7 +32,7 @@ import type { AgentSessionEvent } from "../../session/agent-session-events";
 import { CellBuffer } from "./compositor";
 import { branchLabel, type GitLoader, type GitSnapshot, loadGitSnapshot } from "./git-source";
 import { layoutStage, type Rect, type StageLayout, toLayoutTiles } from "./layout";
-import { type HostStyle, themeStyle } from "./style";
+import { type HostStyle, type HostToken, themeStyle } from "./style";
 import { type Tile, type TileState, TileStore } from "./tiles";
 import {
 	clockTime,
@@ -54,7 +54,7 @@ import {
 } from "./tool-lines";
 import { renderTranscriptPane } from "./transcript-pane";
 import { WeightTween } from "./tween";
-import { agentToken, glyph, type StageToken, type StateGlyph } from "./widgets/common";
+import { agentToken, bold, glyph, type StageToken, type StateGlyph } from "./widgets/common";
 import { renderEvents } from "./widgets/events";
 import { renderGit } from "./widgets/git";
 import { renderHeader } from "./widgets/header";
@@ -80,6 +80,9 @@ const EVENTS_MAX = 200;
 const GIT_MIN_INTERVAL_MS = 3_000;
 const LOGO_TEXT = "GAURAV'S HARNESS";
 const BIG_LOGO_MIN_COLS = 180;
+/** Badge (5) + gap + wordmark. */
+const BIG_LOGO_WIDTH = 6 + pixelTextWidth(LOGO_TEXT, 1, true, 0);
+const SPACED_LOGO_MIN_COLS = 110;
 const WHEEL_ROWS = 3;
 
 /** What the host reads from the live session (an `AgentSession` satisfies it). */
@@ -761,9 +764,9 @@ export class StageHost {
 		if (cols <= 0 || rows <= 0) return [];
 		const now = this.#now();
 		const layout = this.layoutFor(cols, rows);
-		const buf = new CellBuffer(cols, rows);
+		const buf = new CellBuffer(cols, rows, this.#baseSgr());
 		this.#drawHeader(buf, layout.header, now);
-		this.#band(buf, layout.tabBar, this.#tabs(layout.tabBar.w), false);
+		this.#band(buf, layout.tabBar, this.#tabs(layout.tabBar.w), "panelBg");
 
 		const index = new Map<string, number>();
 		let pane = 0;
@@ -780,8 +783,12 @@ export class StageHost {
 			const at = this.#drawTile(buf, tile, rect, index.get(id), layout, index, now);
 			cursor ??= at;
 		}
-		if (layout.chipStrip) this.#band(buf, layout.chipStrip, [this.#chips(layout, cols)], false);
-		this.#band(buf, layout.footer, this.#footer(cols, now), true);
+		if (layout.chipStrip) this.#band(buf, layout.chipStrip, [this.#chips(layout, cols)], null);
+		// Status row on the lifted surface, key hints on the pane background (reference 212×58).
+		const footer = this.#footer(cols, now);
+		const { footer: f } = layout;
+		this.#band(buf, { ...f, h: Math.min(1, f.h) }, footer, "surfaceBg");
+		if (f.h > 1) this.#band(buf, { ...f, y: f.y + 1, h: f.h - 1 }, footer.slice(1), null);
 
 		const lines = buf.toLines();
 		if (cursor && cursor.row >= 0 && cursor.row < lines.length) {
@@ -791,18 +798,25 @@ export class StageHost {
 		return lines;
 	}
 
-	/** Blit full-width rows into a band, optionally on the `panel` background. */
-	#band(buf: CellBuffer, rect: Rect, rows: readonly string[], panel: boolean): void {
+	/** Opener of the style's `paneBg` (empty for unstyled renders): every cell's fallback background. */
+	#baseSgr(): string {
+		const probe = this.#style("paneBg", " ");
+		return probe.slice(0, probe.indexOf(" "));
+	}
+
+	/** Blit full-width rows into a band, optionally on a background token (else the pane background). */
+	#band(buf: CellBuffer, rect: Rect, rows: readonly string[], bg: HostToken | null): void {
 		if (rect.h <= 0) return;
 		const s = this.#style;
 		const out = [];
 		for (let r = 0; r < rect.h; r++) {
 			const row = truncateToWidth(rows[r] ?? "", rect.w, undefined, true);
-			out.push(panel ? s("panelBg", row) : row);
+			out.push(bg ? s(bg, row) : row);
 		}
 		buf.blit(out, rect);
 	}
 
+	/** `</>` badge + scale-1 pixel wordmark with a straight drop shadow: {@link BIG_LOGO_WIDTH} × 3 rows. */
 	#bigLogo(): string[] {
 		const themeName = getCurrentThemeName() ?? "";
 		if (this.#logo?.theme === themeName) return this.#logo.rows;
@@ -811,6 +825,7 @@ export class StageHost {
 		const word = renderPixelText(LOGO_TEXT, {
 			scale: 1,
 			shadow: true,
+			shadowDx: 0,
 			colors: palette ? { face: palette.accent, shadow: palette.pixelShadow } : undefined,
 		});
 		const badge = [s("accent", "┌───┐"), s("accent", "│</>│"), s("accent", "└───┘")];
@@ -819,21 +834,27 @@ export class StageHost {
 		return rows;
 	}
 
+	/** One-row wordmark for headers too narrow for the pixel logo: bold gold, letter-spaced when it fits. */
+	#textLogo(cols: number): string {
+		const s = this.#style;
+		const word = cols >= SPACED_LOGO_MIN_COLS ? [...LOGO_TEXT].join(" ") : LOGO_TEXT;
+		return `${s("accent", "</>")}  ${s("accent", bold(word))}`;
+	}
+
 	#drawHeader(buf: CellBuffer, rect: Rect, now: number): void {
 		if (rect.h <= 0) return;
 		const s = this.#style;
-		this.#band(buf, rect, [], true);
+		this.#band(buf, rect, [], null);
 		const big = rect.h >= 3;
 		let fieldsX = 0;
-		let logo: string[] = [`${s("accent", "</>")} ${s("accent", LOGO_TEXT)}`, ""];
+		let logo: string[] = [this.#textLogo(rect.w), ""];
 		if (big) {
 			const rows = this.#bigLogo();
-			const logoW = 6 + pixelTextWidth(LOGO_TEXT, 1, true);
 			buf.blit(
-				rows.map(r => s("panelBg", truncateToWidth(r, logoW, undefined, true))),
-				{ x: 1, y: rect.y, w: logoW, h: rows.length },
+				rows.map(r => truncateToWidth(r, BIG_LOGO_WIDTH, undefined, true)),
+				{ x: 1, y: rect.y, w: BIG_LOGO_WIDTH, h: rows.length },
 			);
-			fieldsX = 1 + logoW + 2;
+			fieldsX = 1 + BIG_LOGO_WIDTH + 3;
 			logo = [];
 		}
 		const session = this.#session;
@@ -874,10 +895,7 @@ export class StageHost {
 			2,
 			s,
 		);
-		buf.blit(
-			rows.map(r => s("panelBg", r)),
-			{ x: rect.x + fieldsX, y: rect.y, w: rect.w - fieldsX, h: 2 },
-		);
+		buf.blit(rows, { x: rect.x + fieldsX, y: rect.y, w: rect.w - fieldsX, h: 2 });
 	}
 
 	#tabs(width: number): string[] {
@@ -959,6 +977,31 @@ export class StageHost {
 		return line;
 	}
 
+	/** Pane 0.0 statusline (on `badgeBg`) and mode line, replacing omp's status bar inside the pane. */
+	#transcriptStatus(width: number): string[] {
+		const s = this.#style;
+		const session = this.#session;
+		const stats = session?.getSessionStats();
+		const ctx = session?.getContextUsage?.();
+		const git = this.#git;
+		const [status, mode] = renderPaneStatus(
+			{
+				branch: git?.branch,
+				dirty: git ? git.changed + git.untracked > 0 : false,
+				model: modelLabel(session?.model),
+				effort: session?.thinkingLevel,
+				tokens: `${compact(stats?.tokens.total ?? 0)} tok`,
+				cost: money(stats?.cost ?? 0),
+				ctx: ctx ? { used: ctx.tokens, limit: ctx.contextWindow } : undefined,
+				modeLine: { mode: "INSERT", tools: stats?.toolCalls ?? 0, editedFiles: this.#diffByPath.size },
+			},
+			Math.max(0, width - 2),
+			2,
+			s,
+		);
+		return [s("badgeBg", ` ${status} `), ` ${mode}`];
+	}
+
 	/** Square light frame (v2 §2); focused panes draw it in `borderAccent`. Returns the inner rect. */
 	#frame(buf: CellBuffer, rect: Rect, title: string, badge: string, token: StageToken): Rect {
 		const s = this.#style;
@@ -1005,11 +1048,12 @@ export class StageHost {
 			case "transcript": {
 				const session = this.#session;
 				const title = this.#paneTitle(index, "session", modelLabel(session?.model), focused);
-				const inner = this.#frame(buf, rect, title, s("accent", "@main"), border);
+				const inner = this.#frame(buf, rect, title, s("badgeBg", s("accent", " @main ")), border);
 				const out = renderTranscriptPane(
 					{
 						blocks: this.#opts.blocks(),
 						chrome: this.#opts.chrome(),
+						status: this.#transcriptStatus(inner.w),
 						tool: id => this.toolRecord(id),
 						isAssistant: this.#opts.isAssistant,
 						expandTools: this.#opts.expandTools?.() ?? false,

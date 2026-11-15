@@ -63,7 +63,7 @@ export function renderStatusBar(data: StatusBarData, width: number, height: numb
 	const status = spread(leftText, rightText, width);
 
 	const hints = data.hints.map((h, i) => ({
-		text: `${style(i === 0 ? "accent" : "text", h.key)} ${style("muted", h.label)}`,
+		text: `${style("badgeBg", style(i === 0 ? "accent" : "text", ` ${h.key} `))} ${style("muted", h.label)}`,
 		priority: -i,
 	}));
 	const version = `${style("dim", data.version)} `;

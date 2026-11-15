@@ -20,7 +20,11 @@ export type StageToken =
 	| "info"
 	| AgentToken
 	| "diffAddBg"
-	| "diffDelBg";
+	| "diffDelBg"
+	/** Lifted bar (status row), key caps, active tab — backgrounds. */
+	| "surfaceBg"
+	| "badgeBg"
+	| "selectedBg";
 
 export type StageStyle = (token: StageToken, text: string) => string;
 

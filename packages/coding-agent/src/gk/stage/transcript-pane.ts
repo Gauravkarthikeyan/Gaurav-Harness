@@ -3,8 +3,8 @@
  * terminal. Tool cards become one line each (unless omp's "expand tools" is on); user prompts become
  * `HH:MM:SS ❯ text`; assistant replies keep omp's markdown render behind an accent bar; every other block
  * (notices, errors, usage rows, dialogs in the transcript) renders exactly as omp draws it. The
- * composer roots (editor, status line, HUD rows) render below at the pane width, unchanged, so input,
- * autocomplete and selectors behave as they do inline.
+ * composer roots (editor, HUD rows) render below at the pane width, unchanged, so input, autocomplete and
+ * selectors behave as they do inline; the Stage's pane statusline and mode line sit under them.
  */
 import { type Component, CURSOR_MARKER, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import type { HostStyle } from "./style";
@@ -30,8 +30,10 @@ function isPromptBlock(component: Component): component is Component & PromptBlo
 export interface TranscriptPaneInput {
 	/** Transcript blocks in order (omp's `TranscriptContainer` children). */
 	blocks: readonly Component[];
-	/** Composer roots drawn under the transcript (editor, status line, HUD rows). */
+	/** Composer roots drawn under the transcript (editor, HUD rows). */
 	chrome: readonly Component[];
+	/** Pre-rendered rows pinned under the composer (the pane statusline + mode line). */
+	status?: readonly string[];
 	/** Tool record for a call id; `undefined` falls back to omp's own card. */
 	tool: (id: string) => ToolRecord | undefined;
 	/** Assistant-message blocks get the accent bar. */
@@ -102,6 +104,7 @@ export function renderTranscriptPane(input: TranscriptPaneInput, width: number, 
 	if (width <= 0 || height <= 0) return { rows: [], cursor: null, maxScroll: 0 };
 	let chrome: string[] = [];
 	for (const root of input.chrome) chrome.push(...root.render(width));
+	if (input.status) chrome.push(...input.status);
 	if (chrome.length > height) chrome = chrome.slice(chrome.length - height);
 
 	let cursor: { row: number; col: number } | null = null;

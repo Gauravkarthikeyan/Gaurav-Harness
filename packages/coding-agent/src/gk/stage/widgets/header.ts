@@ -56,7 +56,7 @@ function budgetToken(fraction: number): "success" | "warning" | "error" {
 
 function renderColumn(col: Column, style: StageStyle): [string, string, number] {
 	const labelW = Math.max(...col.cells.map(([l]) => visibleWidth(l)));
-	const rows = col.cells.map(([label, value]) => (label ? `${style("dim", padEnd(label, labelW))} ${value}` : value));
+	const rows = col.cells.map(([label, value]) => (label ? `${style("muted", padEnd(label, labelW))} ${value}` : value));
 	while (rows.length < 2) rows.push("");
 	const width = Math.max(...rows.map(r => visibleWidth(r)));
 	return [padEnd(rows[0]!, width), padEnd(rows[1]!, width), width];
@@ -93,7 +93,7 @@ export function renderHeader(data: HeaderData, width: number, height: number, st
 		{
 			cells: [
 				["BRANCH", style("text", data.branch)],
-				["UPTIME", style("muted", data.uptime)],
+				["UPTIME", style("text", data.uptime)],
 			],
 			priority: 3,
 		},
@@ -102,7 +102,7 @@ export function renderHeader(data: HeaderData, width: number, height: number, st
 			cells: data.cache
 				? [
 						["CTX", ctxValue],
-						["CACHE", style("muted", data.cache)],
+						["CACHE", style("text", data.cache)],
 					]
 				: [["CTX", ctxValue]],
 			priority: 2,
@@ -112,7 +112,7 @@ export function renderHeader(data: HeaderData, width: number, height: number, st
 	const dateText = data.saved ? `TODAY ${data.today} · ${data.date}` : data.date;
 	const right0 = style("text", bold(data.clock));
 	const right1 = data.saved
-		? `${style("dim", "TODAY")} ${style("text", data.today)} ${style("dim", "·")} ${style("muted", data.date)}`
+		? `${style("muted", "TODAY")} ${style("text", data.today)} ${style("dim", "·")} ${style("muted", data.date)}`
 		: style("muted", data.date);
 	const rightW = Math.max(visibleWidth(data.clock), visibleWidth(dateText));
 

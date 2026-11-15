@@ -22,10 +22,10 @@ export interface TabsData {
 export function renderTabs(data: TabsData, width: number, height: number, style: StageStyle): string[] {
 	const left = ` ${data.tabs
 		.map(t => {
-			const label = `${t.index}:${t.name}${t.active ? "*" : ""}`;
-			return t.active ? style("accent", bold(label)) : style("muted", label);
+			const label = ` ${t.index}:${t.name}${t.active ? "*" : ""} `;
+			return t.active ? style("selectedBg", style("text", bold(label))) : style("muted", label);
 		})
-		.join("  ")}`;
+		.join(" ")}`;
 	const right = (data.summary ?? [])
 		.filter(group => group.length > 0)
 		.map(group =>

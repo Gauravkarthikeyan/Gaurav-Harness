@@ -7,11 +7,13 @@ import type { Component, Container, TUI } from "@oh-my-pi/pi-tui";
 import { AssistantMessageComponent } from "@oh-my-pi/pi-tui/chat/assistant-message";
 import type { TranscriptContainer } from "@oh-my-pi/pi-tui/chrome/transcript-container";
 import type { TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
+import { setNativeSymbolPreset } from "@oh-my-pi/pi-tui/theme/theme";
 import type { Settings } from "../../config/settings";
 import { cfgGkStageEnabled } from "../../modes/settings";
 import { AgentRegistry } from "../../registry/agent-registry";
 import type { AgentSession } from "../../session/agent-session";
 import { StageHost } from "./host";
+import { themeStyle } from "./style";
 
 /** The interactive-mode fields the Stage reads (all public on `InteractiveMode`). */
 export interface StageModeContext {
@@ -35,7 +37,7 @@ export interface StageModeContext {
 	readonly hookWidgetContainerAbove: Container;
 	readonly editorContainer: Container;
 	readonly hookWidgetContainerBelow: Container;
-	readonly statusLine: Component;
+	readonly editor: { setBorderVisible(visible: boolean): void; setPromptGutter(gutter: string | undefined): void };
 	readonly toolOutputExpanded: boolean;
 	readonly todoPhases: readonly TodoPhase[];
 }
@@ -47,8 +49,8 @@ export function shouldMountStage(settings: Settings): boolean {
 
 /**
  * The composer roots below the transcript, in omp's order (`InteractiveMode.init` → `setRuntimeChildren`),
- * minus the todo and subagent HUDs — the Stage shows those as the todo widget and agent tiles — plus the
- * status line the composer mounts last.
+ * minus the todo and subagent HUDs — the Stage shows those as the todo widget and agent tiles — and minus omp's
+ * status line: pane 0.0 draws the Stage pane statusline under the composer instead.
  */
 function chromeRoots(ctx: StageModeContext): Component[] {
 	return [
@@ -68,11 +70,18 @@ function chromeRoots(ctx: StageModeContext): Component[] {
 		ctx.hookWidgetContainerAbove,
 		ctx.editorContainer,
 		ctx.hookWidgetContainerBelow,
-		ctx.statusLine,
 	];
 }
 
+/**
+ * Mount the Stage. Its chrome is plain Unicode in any monospace font, so omp's components inside pane 0.0 switch
+ * to the Unicode symbol preset (process-local, never persisted), and the composer drops its frame for a bare gold
+ * `❯ ` prompt — its status band is replaced by the pane statusline.
+ */
 export function mountStage(ctx: StageModeContext): StageHost {
+	setNativeSymbolPreset("unicode");
+	ctx.editor.setBorderVisible(false);
+	ctx.editor.setPromptGutter(`${themeStyle("accent", "❯")} `);
 	const host = new StageHost({
 		ui: ctx.ui,
 		session: () => ctx.session,

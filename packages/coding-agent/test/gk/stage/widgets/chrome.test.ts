@@ -52,7 +52,7 @@ describe("renderTabs", () => {
 		const rows = renderTabs(F.tabs, 120, 1, identity);
 		expectExact(rows, 120, 1);
 		expect(trimmed(rows)).toEqual([
-			` ${bold("0:stage*")}  1:crew  2:logs  3:git  4:pty:claude${" ".repeat(21)}● 2 running  ○ 1 queued  ✓ 1 done │ plan#1 · 4 items`,
+			` ${bold(" 0:stage* ")}  1:crew   2:logs   3:git   4:pty:claude ${" ".repeat(15)}● 2 running  ○ 1 queued  ✓ 1 done │ plan#1 · 4 items`,
 		]);
 	});
 
@@ -67,7 +67,7 @@ describe("renderStatusBar", () => {
 		expectExact(rows, 140, 2);
 		expect(trimmed(rows)).toEqual([
 			` [gk]  0:stage*  ⎇ main ↑2  MCP 3/4 · skills 19${" ".repeat(35)}✱ opus-5.5 conductor  crew 2▶1○1✓  $0.42  03:11 15-Nov-26`,
-			` ^K palette  ⏎ zoom pane  ^O expand  M-a agent hub  ? help${" ".repeat(68)}gk-code 0.1.0`,
+			`  ^K  palette   ⏎  zoom pane   ^O  expand   M-a  agent hub   ?  help${" ".repeat(58)}gk-code 0.1.0`,
 		]);
 	});
 
@@ -75,7 +75,7 @@ describe("renderStatusBar", () => {
 		const rows = renderStatusBar(F.statusBar, 60, 2, identity);
 		expect(trimmed(rows)).toEqual([
 			" [gk]  0:stage*    ✱ opus-5.5 conductor  crew 2▶1○1✓  $0.42",
-			" ^K palette  ⏎ zoom pane  ^O expand           gk-code 0.1.0",
+			"  ^K  palette   ⏎  zoom pane   ^O  expand     gk-code 0.1.0",
 		]);
 		for (const w of [40, 80, 212]) {
 			expect(stripTerminalSequences(renderStatusBar(F.statusBar, w, 2, sgr).join("\n"))).not.toContain("omp");
@@ -106,6 +106,32 @@ describe("renderPaneStatus", () => {
 			identity,
 		);
 		expect(row!.trimEnd()).toBe("ada  ⎇ main ●  ✱ haiku-5.5");
+	});
+
+	it("adds the effort after the model and a composer mode line on the second row", () => {
+		const rows = renderPaneStatus(
+			{
+				branch: "main",
+				dirty: true,
+				model: "gpt-5.6-luna",
+				effort: "high",
+				tokens: "15.1k tok",
+				cost: "$0.00",
+				ctx: { used: 15_140, limit: 272_000 },
+				modeLine: { mode: "INSERT", tools: 3, editedFiles: 1 },
+			},
+			100,
+			2,
+			identity,
+		);
+		expectExact(rows, 100, 2);
+		expect(trimmed(rows)).toEqual([
+			"⎇ main ●  ✱ gpt-5.6-luna · high  § 15.1k tok  $0.00  ◷ 15,140 (6%)",
+			"-- INSERT --  tools 3 · edits 1 file",
+		]);
+		expect(trimmed(renderPaneStatus({ modeLine: { mode: "INSERT", tools: 0, editedFiles: 2 } }, 60, 2, identity))[1]).toBe(
+			"-- INSERT --  tools 0 · edits 2 files",
+		);
 	});
 
 	it("is width/height exact with styled text", () => {

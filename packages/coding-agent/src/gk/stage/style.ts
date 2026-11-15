@@ -11,12 +11,12 @@ import type { ColorMode, ThemeBg, ThemeColor } from "@oh-my-pi/pi-tui/theme/sche
 import { getCurrentThemeName } from "@oh-my-pi/pi-tui/theme/theme";
 import type { StageStyle, StageToken } from "./widgets/common";
 
-/** Widget tokens plus the host's own band/badge backgrounds. */
-export type HostToken = StageToken | "panelBg" | "badgeBg" | "selectedBg";
+/** Widget tokens plus the host's own band backgrounds. */
+export type HostToken = StageToken | "panelBg" | "paneBg";
 
 export type HostStyle = (token: HostToken, text: string) => string;
 
-type BgToken = "diffAddBg" | "diffDelBg" | "panelBg" | "badgeBg" | "selectedBg";
+type BgToken = "diffAddBg" | "diffDelBg" | "panelBg" | "paneBg" | "surfaceBg" | "badgeBg" | "selectedBg";
 
 /** Palette slot for every token on GK themes. */
 function paletteColor(p: GkPalette, token: HostToken): string {
@@ -59,6 +59,10 @@ function paletteColor(p: GkPalette, token: HostToken): string {
 			return p.diffRemoveBg;
 		case "panelBg":
 			return p.panel;
+		case "paneBg":
+			return p.paneBg;
+		case "surfaceBg":
+			return p.surface;
 		case "badgeBg":
 			return p.badgeBg;
 		case "selectedBg":
@@ -87,10 +91,13 @@ const THEME_FG: Record<Exclude<HostToken, BgToken>, ThemeColor> = {
 };
 
 /** Background tokens and their nearest omp slot for non-GK themes. */
-const THEME_BG: Record<BgToken, ThemeBg> = {
+const THEME_BG: Record<BgToken, ThemeBg | null> = {
 	diffAddBg: "toolSuccessBg",
 	diffDelBg: "toolErrorBg",
 	panelBg: "statusLineBg",
+	// Non-GK themes keep the terminal's own background under panes.
+	paneBg: null,
+	surfaceBg: "statusLineBg",
 	badgeBg: "selectedBg",
 	selectedBg: "selectedBg",
 };
@@ -116,7 +123,8 @@ function opener(token: HostToken): string {
 	} else if (typeof theme === "undefined") {
 		open = "";
 	} else if (isBg(token)) {
-		open = theme.getBgAnsi(THEME_BG[token]);
+		const slot = THEME_BG[token];
+		open = slot ? theme.getBgAnsi(slot) : "";
 	} else {
 		open = theme.getFgAnsi(THEME_FG[token]);
 	}
