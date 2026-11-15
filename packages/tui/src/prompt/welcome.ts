@@ -400,9 +400,9 @@ export class WelcomeComponent implements Component {
 }
 
 /**
- * omp's native lockup (`omp.welcome.lockup`, keyed `lockup`): the terminal's
- * builtin `omp` mark, which it draws on, beside the `omp` wordmark with
+ * Native lockup (`omp.welcome.lockup`, keyed `lockup`): the app wordmark with
  * `v<version>` under it. The welcome card and the setup splash show it.
+ * gk: no builtin image beside it (the host's builtin mark is omp's logo).
  */
 export function lockupNode(version: string, update: VersionUpdate | null = null): NativeNode {
 	// Brand lines are short and fixed; never wrap or truncate them.
@@ -411,7 +411,6 @@ export function lockupNode(version: string, update: VersionUpdate | null = null)
 	return keyed(
 		row(
 			[
-				node("image", { builtin: "omp", alt: APP_NAME, w: 128, role: "omp.welcome.logo" }, undefined, "logo"),
 				keyed(
 					col(
 						[

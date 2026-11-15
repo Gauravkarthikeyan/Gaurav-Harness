@@ -12,13 +12,12 @@ describe("WelcomeComponent", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("natively sets the version under the wordmark beside the logo", () => {
+	it("natively sets the version under the wordmark, with no builtin logo image", () => {
 		const tree = new WelcomeComponent("18.4.12").describe({} as never);
 		expect(tree.c?.[0]).toMatchObject({
 			key: "lockup",
 			p: { role: "omp.welcome.lockup" },
 			c: [
-				{ k: "image", key: "logo" },
 				{
 					k: "col",
 					p: { role: "omp.welcome.mark" },
@@ -29,6 +28,7 @@ describe("WelcomeComponent", () => {
 				},
 			],
 		});
+		expect(JSON.stringify(tree.c?.[0])).not.toContain('"image"');
 	});
 
 	it("natively follows the version with the update status", () => {
