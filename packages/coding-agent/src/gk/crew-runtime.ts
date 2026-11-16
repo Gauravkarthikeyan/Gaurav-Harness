@@ -5,7 +5,8 @@ import type { ToolSession } from "../tools";
 import type { VibeSessionRegistry } from "../vibe/runtime";
 import { answerCrewQuestion } from "./ask-conductor-tool";
 import type { CrewLedger } from "./ledger";
-import type { Assignment, CastResult, WorkItem } from "./router";
+import { estimateCostUsd } from "./roster";
+import { type Assignment, type CastResult, conductorBaseline, conductorEquivalentUsd, type WorkItem } from "./router";
 import type { RosterEntry, Tier } from "./types";
 
 export type CrewItemState = "waiting" | "running" | "done" | "failed" | "cancelled";
@@ -41,7 +42,16 @@ export interface CrewRunSummary {
 		durationMs: number;
 	}>;
 	actualUsd: number;
+	/** Conductor-only estimate for the run's items (same size estimates, conductor catalog price). */
 	baselineEstUsd: number;
+	/** Crew estimate the Casting Board approved. */
+	crewEstUsd?: number;
+	/** Conductor alone on the same work at its own rates; see {@link conductorEquivalentUsd}. */
+	conductorEquivUsd?: number;
+	/** The conductor is plan-priced: no dollar baseline, no savings claim. */
+	baselinePlan?: boolean;
+	/** Conductor selector the baseline is priced on. */
+	conductor?: string;
 	status: "completed" | "partial" | "cancelled";
 }
 
@@ -79,6 +89,8 @@ export interface CrewRunOptions {
 	promptHead?: string;
 	/** Employee names by item id (the Casting Board shows them before the run exists); generated when absent. */
 	names?: Record<string, string>;
+	/** The conductor's roster entry: prices the conductor-only baseline in the summary. */
+	conductor?: Pick<RosterEntry, "selector" | "planIncluded" | "cost">;
 }
 
 /** Concurrency cap for a selector the roster does not list (e.g. the conductor fallback). */
@@ -110,19 +122,31 @@ interface ItemRuntime {
 	lastText?: string;
 }
 
-/** The worker brief: item brief + write-scope rule + reporting rule. */
+/**
+ * The worker brief: the conductor's brief, then the house rules every worker follows (spec §5.4,
+ * planner/executor with an advisor): read context first, load the named skills, verify each
+ * acceptance criterion yourself, ask the conductor instead of guessing, stay in scope, report.
+ */
 export function crewWorkerPrompt(item: WorkItem): string {
 	const scope = item.scope.filter(entry => entry.trim() !== "");
-	const lines = [`# ${item.title}`, "", item.brief.trim(), ""];
+	const lines = [`# ${item.title}`, "", item.brief.trim(), "", "## How to work", ""];
+	lines.push(
+		"- Read every file the brief names before you change anything; match the conventions you find.",
+		"- If the brief names skills (e.g. `skill://impeccable`, `skill://test-driven-development`), read each one first and follow it.",
+		"- Meet every acceptance criterion and check each one yourself (run it, test it, open it). Do not stop at “looks right”.",
+		"- A requirement is ambiguous, a contract conflicts with the code, or a file the brief relies on is missing: call `ask_conductor` with one specific question and the options you see. Do not guess on decisions that change the result.",
+	);
 	if (scope.length === 0) {
-		lines.push("Do not modify any files; report findings only.");
+		lines.push("- Do not modify any files; report findings only.");
 	} else {
-		lines.push(
-			`Only write inside: ${scope.join(", ")}. Do not modify files outside these paths.`,
-			"",
-			"When done, report the files you changed and how you verified the change.",
-		);
+		lines.push(`- Only write inside: ${scope.join(", ")}. Do not modify files outside these paths.`);
 	}
+	lines.push(
+		"",
+		"## Report",
+		"",
+		"End with: files changed; each acceptance criterion and how you verified it (command + result); anything left open or assumed.",
+	);
 	return lines.join("\n");
 }
 
@@ -159,14 +183,26 @@ export class CrewRun {
 				};
 			},
 		};
-		for (const entry of opts.roster) this.#limits.set(entry.selector, Math.max(1, entry.maxConcurrent));
-		const assignments = new Map(opts.cast.assignments.map(a => [a.itemId, a]));
-		for (const item of opts.items) {
-			const assignment = assignments.get(item.id);
+		this.#register(opts.items, opts.cast.assignments, opts.names, opts.roster);
+	}
+
+	#register(
+		items: readonly WorkItem[],
+		assignments: readonly Assignment[],
+		names: Record<string, string> | undefined,
+		roster: readonly RosterEntry[],
+	): void {
+		for (const entry of roster) {
+			if (!this.#limits.has(entry.selector)) this.#limits.set(entry.selector, Math.max(1, entry.maxConcurrent));
+		}
+		const byItem = new Map(assignments.map(a => [a.itemId, a]));
+		for (const item of items) {
+			const assignment = byItem.get(item.id);
 			if (!assignment) throw new Error(`Crew item "${item.id}" has no assignment.`);
+			if (this.#items.has(item.id)) throw new Error(`Crew item "${item.id}" is already in this run.`);
 			this.#items.set(item.id, {
 				item,
-				name: opts.names?.[item.id] ?? generateTaskName(),
+				name: names?.[item.id] ?? generateTaskName(),
 				assignment,
 				state: "waiting",
 				generation: 0,
@@ -178,11 +214,32 @@ export class CrewRun {
 		}
 	}
 
+	/**
+	 * Add approved items to the live run (crew_add). Dependencies may name any item already in the run;
+	 * new items start as soon as theirs are done.
+	 */
+	addItems(
+		items: readonly WorkItem[],
+		assignments: readonly Assignment[],
+		names: Record<string, string> | undefined,
+		roster: readonly RosterEntry[],
+	): void {
+		if (this.#finished || this.#cancelled) throw new Error("Crew run has already finished.");
+		this.#register(items, assignments, names, roster);
+		for (const item of items) this.#emit({ type: "item-state", itemId: item.id, state: "waiting" });
+		this.#opts.onChange();
+		this.#pump();
+	}
+
 	/** Spawn every item whose dependencies are done, honouring `maxConcurrent` per selector. */
 	start(): void {
 		if (this.#started) return;
 		this.#started = true;
 		this.#pump();
+	}
+
+	get runId(): string {
+		return this.#opts.runId;
 	}
 
 	state(itemId: string): CrewItemState {
@@ -254,7 +311,42 @@ export class CrewRun {
 		if (!rt.excluded.includes(previous.selector)) rt.excluded.push(previous.selector);
 		const minTier = Math.min(3, previous.tier + 1) as Tier;
 		const next = recast([...rt.excluded], minTier);
+		await this.#replace(rt, next, [
+			"## Escalation",
+			`A previous worker (${previous.selector}) did not finish this item well. Note from the conductor:`,
+			note.trim(),
+		]);
+		return next;
+	}
 
+	/**
+	 * Put the item on another model (crew_reassign / Casting Board pick). A waiting item just swaps its
+	 * assignment; a running or failed one is stopped and restarted on `next` with the conductor's note and
+	 * whatever the previous worker reported. Done and cancelled items are refused.
+	 */
+	async reassign(itemId: string, next: Assignment, note = ""): Promise<"swapped" | "restarted"> {
+		if (this.#finished || this.#cancelled) throw new Error("Crew run has already finished.");
+		const rt = this.#get(itemId);
+		if (rt.state === "done" || rt.state === "cancelled") {
+			throw new Error(`Crew item "${itemId}" is already ${rt.state}; add a new item with crew_add instead.`);
+		}
+		if (rt.state === "waiting" && rt.workers.length === 0 && !rt.spawning) {
+			rt.assignment = next;
+			this.#opts.onChange();
+			this.#pump();
+			return "swapped";
+		}
+		const previous = rt.assignment.selector;
+		await this.#replace(rt, next, [
+			"## Reassigned",
+			`This item moved from ${previous} to you. Pick up from the current state of the files in scope; do not redo finished work.`,
+			...(note.trim() ? ["Note from the conductor:", note.trim()] : []),
+		]);
+		return "restarted";
+	}
+
+	/** Kill the item's worker and queue it to relaunch on `next` with `section` and the old report appended. */
+	async #replace(rt: ItemRuntime, next: Assignment, section: string[]): Promise<void> {
 		const oldWorker = rt.workerId;
 		rt.generation++;
 		rt.workerId = undefined;
@@ -268,9 +360,7 @@ export class CrewRun {
 		rt.nextPrompt = [
 			crewWorkerPrompt(rt.item),
 			"",
-			"## Escalation",
-			`A previous worker (${previous.selector}) did not finish this item well. Note from the conductor:`,
-			note.trim(),
+			...section,
 			...(report ? ["", "Previous worker's report:", report.slice(0, ESCALATION_REPORT_MAX)] : []),
 		].join("\n");
 		this.#setState(rt, "waiting");
@@ -282,7 +372,6 @@ export class CrewRun {
 			}
 		}
 		this.#pump();
-		return next;
 	}
 
 	/** Stop one item's worker and mark it cancelled; items depending on it fail instead of starting. */
@@ -482,7 +571,8 @@ export class CrewRun {
 	}
 
 	#summary(): CrewRunSummary {
-		const items = [...this.#items.values()].map(rt => ({
+		const runtimes = [...this.#items.values()];
+		const items = runtimes.map(rt => ({
 			itemId: rt.item.id,
 			name: rt.name,
 			selector: rt.assignment.selector,
@@ -495,11 +585,41 @@ export class CrewRun {
 			: items.every(entry => entry.state === "done")
 				? "completed"
 				: "partial";
+		const actualUsd = items.reduce((sum, entry) => sum + entry.costUsd, 0);
+		const conductor = this.#opts.conductor;
+		const crewEstUsd = runtimes.reduce((sum, rt) => sum + rt.assignment.estCostUsd, 0);
+		if (!conductor) {
+			return {
+				runId: this.#opts.runId,
+				items,
+				actualUsd,
+				baselineEstUsd: this.#opts.cast.baselineEstUsd,
+				crewEstUsd,
+				status,
+			};
+		}
+		const baseline = conductorBaseline(
+			runtimes.map(rt => rt.item),
+			conductor,
+		);
+		const conductorEquivUsd = baseline.plan
+			? undefined
+			: conductorEquivalentUsd(
+					runtimes.map((rt, i) => ({
+						actualUsd: items[i]!.costUsd,
+						estUsd: rt.assignment.estCostUsd,
+						baselineUsd: estimateCostUsd(conductor.cost, rt.item.size),
+					})),
+				);
 		return {
 			runId: this.#opts.runId,
 			items,
-			actualUsd: items.reduce((sum, entry) => sum + entry.costUsd, 0),
-			baselineEstUsd: this.#opts.cast.baselineEstUsd,
+			actualUsd,
+			baselineEstUsd: baseline.usd,
+			crewEstUsd,
+			conductorEquivUsd,
+			baselinePlan: baseline.plan,
+			conductor: conductor.selector,
 			status,
 		};
 	}

@@ -10,6 +10,7 @@ import {
 	crewWorkerPrompt,
 } from "../../src/gk/crew-runtime";
 import { CrewLedger } from "../../src/gk/ledger";
+import { estimateCostUsd } from "../../src/gk/roster";
 import type { Assignment, WorkItem } from "../../src/gk/router";
 import type { RosterEntry, Tier } from "../../src/gk/types";
 
@@ -76,6 +77,8 @@ function item(id: string, extra: Partial<WorkItem> = {}): WorkItem {
 function rosterEntry(selector: string, tier: Tier, maxConcurrent: number): RosterEntry {
 	return {
 		selector,
+		provider: selector.split("/")[0]!,
+		openWeight: false,
 		tier,
 		strengths: [],
 		enabled: true,
@@ -96,7 +99,10 @@ describe("CrewRun", () => {
 		for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 	});
 
-	function setup(items: WorkItem[], opts: { maxConcurrent?: number } = {}) {
+	function setup(
+		items: WorkItem[],
+		opts: { maxConcurrent?: number; conductor?: Pick<RosterEntry, "selector" | "planIncluded" | "cost"> } = {},
+	) {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gk-"));
 		dirs.push(dir);
 		const ledger = new CrewLedger(path.join(dir, "crew-ledger.jsonl"));
@@ -109,6 +115,7 @@ describe("CrewRun", () => {
 				assignments: items.map(i => assignment(i.id)),
 				totalEstUsd: 0.1 * items.length,
 				baselineEstUsd: 2,
+				baselinePlan: false,
 				overBudget: false,
 			},
 			roster: [rosterEntry("cheap/t1", 1, opts.maxConcurrent ?? 2), rosterEntry("mid/t2", 2, 2)],
@@ -118,9 +125,62 @@ describe("CrewRun", () => {
 				changes++;
 			},
 			promptHead: "build the thing",
+			conductor: opts.conductor,
 		});
 		return { run, spawner, ledger, changes: () => changes };
 	}
+
+	it("addItems joins a live run; new items wait on existing deps", async () => {
+		const { run, spawner } = setup([item("a")]);
+		run.start();
+		await tick();
+		run.addItems(
+			[item("b", { dependsOn: ["a"] }), item("c")],
+			[assignment("b"), assignment("c", "mid/t2", 2)],
+			{ b: "Bee", c: "Cee" },
+			[],
+		);
+		await tick();
+		expect(spawner.spawned.map(w => w.name)).toEqual([run.workerName("a"), "Cee"]);
+		expect(run.state("b")).toBe("waiting");
+		spawner.spawned[0]!.finish(true, 0.1);
+		await tick();
+		expect(spawner.spawned.map(w => w.name)).toContain("Bee");
+		expect(() => run.addItems([item("a")], [assignment("a")], undefined, [])).toThrow(/already in this run/);
+	});
+
+	it("reassign swaps a waiting item and restarts a running one on the new model", async () => {
+		const { run, spawner } = setup([item("a"), item("b", { dependsOn: ["a"] })]);
+		run.start();
+		await tick();
+		expect(await run.reassign("b", assignment("b", "mid/t2", 2))).toBe("swapped");
+		expect(await run.reassign("a", assignment("a", "mid/t2", 2), "keep going")).toBe("restarted");
+		await tick();
+		expect(spawner.killed).toEqual([spawner.spawned[0]!.workerId]);
+		expect(spawner.spawned[1]!.model).toBe("mid/t2");
+		expect(spawner.spawned[1]!.prompt).toContain("## Reassigned");
+		expect(spawner.spawned[1]!.prompt).toContain("keep going");
+		spawner.spawned[1]!.finish(true, 0.1);
+		await tick();
+		expect(spawner.spawned[2]!.model).toBe("mid/t2");
+		spawner.spawned[2]!.finish(true, 0.1);
+		await run.done;
+		await expect(run.reassign("a", assignment("a"))).rejects.toThrow(/already finished/);
+	});
+
+	it("summary prices the baseline at the conductor's rates and reprices actual spend", async () => {
+		const conductor = { selector: "openai-codex/gpt-6-luna", planIncluded: false, cost: { input: 0.1, output: 0.5 } };
+		const { run, spawner } = setup([item("a")], { conductor });
+		run.start();
+		await tick();
+		spawner.spawned[0]!.finish(true, 0.2);
+		const summary = await run.done;
+		const base = estimateCostUsd(conductor.cost, "S");
+		expect(summary.baselineEstUsd).toBeCloseTo(base, 10);
+		expect(summary.crewEstUsd).toBeCloseTo(0.1, 10);
+		expect(summary.conductorEquivUsd).toBeCloseTo(0.2 * (base / 0.1), 10);
+		expect(summary).toMatchObject({ baselinePlan: false, conductor: "openai-codex/gpt-6-luna" });
+	});
 
 	it("does not spawn B until A settles ok", async () => {
 		const { run, spawner, ledger, changes } = setup([item("a"), item("b", { dependsOn: ["a"] })]);
@@ -339,7 +399,8 @@ describe("crewWorkerPrompt", () => {
 		const prompt = crewWorkerPrompt(item("a", { scope: ["src/a/", "package.json"] }));
 		expect(prompt).toContain("Build a.");
 		expect(prompt).toContain("Only write inside: src/a/, package.json");
-		expect(prompt).toContain("report the files you changed and how you verified");
+		expect(prompt).toContain("files changed; each acceptance criterion and how you verified it");
+		expect(prompt).toContain("ask_conductor");
 	});
 
 	it("tells read-only items not to modify files", () => {

@@ -19,12 +19,38 @@ const STATE: Record<CrewItemState, [glyph: string, label: string, token: StageTo
 
 const plain: StageStyle = (_token, text) => text;
 
-/** The verdict line: savings, or the overrun stated plainly. */
-export function payslipVerdict(actual: number, baseline: number): string {
-	if (!(baseline > 0)) return `Spent ${formatUsd(actual)}; no conductor-only estimate to compare.`;
+/**
+ * What the conductor alone would have spent on this run: the actual crew spend repriced at the
+ * conductor's rates when known, else the conductor-only estimate. `undefined` for a plan-priced conductor.
+ */
+export function conductorOnlyUsd(summary: CrewRunSummary): number | undefined {
+	if (summary.baselinePlan) return undefined;
+	return summary.conductorEquivUsd ?? summary.baselineEstUsd;
+}
+
+/** The verdict line: savings, the overrun stated plainly, or no claim at all for a plan-priced conductor. */
+export function payslipVerdict(summary: CrewRunSummary): { text: string; saved: boolean | undefined } {
+	const actual = summary.actualUsd;
+	if (summary.baselinePlan) {
+		return {
+			text: `Crew spent ${formatUsd(actual)}. The conductor${summary.conductor ? ` (${summary.conductor})` : ""} is on a plan, so there is no dollar baseline to compare.`,
+			saved: undefined,
+		};
+	}
+	const baseline = conductorOnlyUsd(summary) ?? 0;
+	if (!(baseline > 0))
+		return { text: `Spent ${formatUsd(actual)}; no conductor-only figure to compare.`, saved: undefined };
 	const diff = baseline - actual;
-	if (diff >= 0) return `You saved ${formatUsd(diff)} (${Math.round((diff / baseline) * 100)}%)`;
-	return `This run cost ${formatUsd(-diff)} more than the conductor alone (est ${formatUsd(baseline)}).`;
+	if (diff >= 0) {
+		return {
+			text: `You saved ${formatUsd(diff)} (${Math.round((diff / baseline) * 100)}%) vs the conductor alone (≈${formatUsd(baseline)}).`,
+			saved: true,
+		};
+	}
+	return {
+		text: `This run cost ${formatUsd(-diff)} more than the conductor alone would have (≈${formatUsd(baseline)}).`,
+		saved: false,
+	};
 }
 
 export function renderPayslip(summary: CrewRunSummary, width: number, style: StageStyle = plain): string[] {
@@ -44,7 +70,9 @@ export function renderPayslip(summary: CrewRunSummary, width: number, style: Sta
 	];
 	const idW = Math.max(4, ...summary.items.map(i => i.itemId.length));
 	const nameW = Math.max(6, ...summary.items.map(i => i.name.length + 1));
-	const modelW = Math.max(5, ...summary.items.map(i => i.selector.length));
+	// The model column gives way first so the cost column is never cut.
+	const fixed = idW + nameW + 11 + 6 + 8 + 2 * 5;
+	const modelW = Math.max(5, Math.min(Math.max(...summary.items.map(i => i.selector.length)), inner - fixed));
 	const head = [
 		padEnd("ITEM", idW),
 		padEnd("WORKER", nameW),
@@ -61,7 +89,7 @@ export function renderPayslip(summary: CrewRunSummary, width: number, style: Sta
 				[
 					s("text", padEnd(item.itemId, idW)),
 					s("agent1", padEnd(`@${item.name}`, nameW)),
-					s("muted", padEnd(item.selector, modelW)),
+					s("muted", padEnd(fit(item.selector, modelW), modelW)),
 					s(token, padEnd(`${glyph} ${label}`, 11)),
 					s("muted", padStart(item.durationMs > 0 ? formatDuration(item.durationMs) : "–", 6)),
 					s("text", padStart(formatUsd(item.costUsd), 8)),
@@ -70,13 +98,16 @@ export function renderPayslip(summary: CrewRunSummary, width: number, style: Sta
 		);
 	}
 	out.push(line(s("border", "─".repeat(inner))));
-	out.push(
-		line(
-			`${s("text", `actual ${formatUsd(summary.actualUsd)}`)}${s("muted", ` · conductor-only estimate ${formatUsd(summary.baselineEstUsd)}`)}`,
-		),
-	);
-	const saved = summary.baselineEstUsd > 0 && summary.actualUsd <= summary.baselineEstUsd;
-	out.push(line(s(saved ? "success" : "warning", payslipVerdict(summary.actualUsd, summary.baselineEstUsd))));
+	const est = summary.crewEstUsd !== undefined ? ` (est ${formatUsd(summary.crewEstUsd)})` : "";
+	const conductorOnly = conductorOnlyUsd(summary);
+	const baselineText = summary.baselinePlan
+		? " · conductor on a plan"
+		: ` · conductor-only est ${formatUsd(summary.baselineEstUsd)}${
+				summary.conductorEquivUsd !== undefined ? ` · same work at its rates ≈${formatUsd(conductorOnly ?? 0)}` : ""
+			}`;
+	out.push(line(`${s("text", `actual ${formatUsd(summary.actualUsd)}`)}${s("muted", `${est}${baselineText}`)}`));
+	const verdict = payslipVerdict(summary);
+	out.push(line(s(verdict.saved === true ? "success" : verdict.saved === false ? "warning" : "muted", verdict.text)));
 	out.push(b(`└${"─".repeat(width - 2)}┘`));
 	return out;
 }

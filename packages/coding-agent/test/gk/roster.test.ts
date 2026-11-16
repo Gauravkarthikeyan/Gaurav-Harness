@@ -63,23 +63,81 @@ describe("buildRoster", () => {
 		expect(buildRoster(models, [])).toEqual([
 			{
 				selector: "a/b",
+				provider: "a",
 				tier: 3,
 				strengths: [],
 				enabled: true,
 				maxConcurrent: 2,
 				planIncluded: false,
+				openWeight: false,
 				cost: { input: 3, output: 15 },
 			},
 			{
 				selector: "c/d",
+				provider: "c",
 				tier: 2,
 				strengths: [],
 				enabled: true,
 				maxConcurrent: 2,
 				planIncluded: true,
+				openWeight: false,
 				cost: { input: 0, output: 0 },
 			},
 		]);
+	});
+
+	it("detects open weights from the model id, whatever the provider", () => {
+		const roster = buildRoster(
+			[
+				{ selector: "commandcode/moonshotai/Kimi-K2.6", cost: { input: 0.95, output: 4 } },
+				{ selector: "commandcode/zai-org/GLM-5.3", cost: { input: 1.4, output: 4.4 } },
+				{ selector: "commandcode/MiniMaxAI/MiniMax-M3", cost: { input: 0.3, output: 1.2 } },
+				{ selector: "commandcode/deepseek/deepseek-v4-pro", cost: { input: 0.66, output: 1.98 } },
+				{ selector: "groq/llama-3.3-70b-versatile", cost: { input: 0.59, output: 0.79 } },
+				{ selector: "openrouter/openai/gpt-oss-120b", cost: { input: 0.1, output: 0.5 } },
+				{ selector: "commandcode/Qwen/Qwen3.8-Max", cost: { input: 2, output: 6 } },
+				{ selector: "anthropic/claude-sonnet-5", cost: { input: 2, output: 10 } },
+				{ selector: "openai-codex/gpt-6-luna", cost: { input: 0.1, output: 0.5 } },
+			],
+			[],
+		);
+		expect(Object.fromEntries(roster.map(e => [e.selector, e.openWeight]))).toEqual({
+			"commandcode/moonshotai/Kimi-K2.6": true,
+			"commandcode/zai-org/GLM-5.3": true,
+			"commandcode/MiniMaxAI/MiniMax-M3": true,
+			"commandcode/deepseek/deepseek-v4-pro": true,
+			"groq/llama-3.3-70b-versatile": true,
+			"openrouter/openai/gpt-oss-120b": true,
+			"commandcode/Qwen/Qwen3.8-Max": false,
+			"anthropic/claude-sonnet-5": false,
+			"openai-codex/gpt-6-luna": false,
+		});
+		expect(roster[0]!.provider).toBe("commandcode");
+	});
+
+	it("raises open-weight flagships priced like tier 1 to tier 2 and seeds strengths", () => {
+		const [kimi, minimax, flash, fable] = buildRoster(
+			[
+				{ selector: "cc/moonshotai/Kimi-K2.6", cost: { input: 0.95, output: 4 } },
+				{ selector: "cc/MiniMaxAI/MiniMax-M3", cost: { input: 0.3, output: 1.2 } },
+				{ selector: "cc/deepseek/deepseek-v4-flash", cost: { input: 0.15, output: 0.6 } },
+				{ selector: "cc/claude-fable-5-2", cost: { input: 0, output: 0 } },
+			],
+			[],
+		);
+		expect(kimi).toMatchObject({ tier: 2, strengths: ["frontend", "backend", "refactor"] });
+		expect(minimax!.tier).toBe(2);
+		expect(flash).toMatchObject({ tier: 1, strengths: ["docs", "tests"] });
+		// A gateway listing a frontier model at $0 does not make it a cheap tier-2 worker.
+		expect(fable).toMatchObject({ tier: 3, planIncluded: true });
+	});
+
+	it("carries context window and measured speed", () => {
+		const [entry] = buildRoster(
+			[{ selector: "a/b", provider: "a", id: "b", cost: { input: 1, output: 2 }, contextWindow: 200_000, tps: 88 }],
+			[],
+		);
+		expect(entry).toMatchObject({ contextWindow: 200_000, tps: 88 });
 	});
 
 	it("applies overrides by selector", () => {
@@ -219,7 +277,12 @@ describe("availableRosterModels", () => {
 	it("maps the registry's available chat models to provider/id selectors with prices", () => {
 		const calls: unknown[][] = [];
 		const available = [
-			{ provider: "anthropic", id: "claude-haiku", cost: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 } },
+			{
+				provider: "anthropic",
+				id: "claude-haiku",
+				contextWindow: 200_000,
+				cost: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+			},
 			{ provider: "ollama", id: "qwen", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
 		];
 		const registry = {
@@ -229,9 +292,23 @@ describe("availableRosterModels", () => {
 			},
 		} as unknown as Pick<ModelRegistry, "getAvailable">;
 
-		expect(availableRosterModels(registry)).toEqual([
-			{ selector: "anthropic/claude-haiku", cost: { input: 1, output: 5 } },
-			{ selector: "ollama/qwen", cost: { input: 0, output: 0 } },
+		expect(availableRosterModels(registry, new Map([["ollama/qwen", { tps: 42 }]]))).toEqual([
+			{
+				selector: "anthropic/claude-haiku",
+				provider: "anthropic",
+				id: "claude-haiku",
+				cost: { input: 1, output: 5 },
+				contextWindow: 200_000,
+				tps: undefined,
+			},
+			{
+				selector: "ollama/qwen",
+				provider: "ollama",
+				id: "qwen",
+				cost: { input: 0, output: 0 },
+				contextWindow: undefined,
+				tps: 42,
+			},
 		]);
 		expect(calls).toEqual([[]]);
 	});

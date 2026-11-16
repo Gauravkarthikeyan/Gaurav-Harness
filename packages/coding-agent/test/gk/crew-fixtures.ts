@@ -11,7 +11,7 @@ import {
 } from "../../src/gk/crew-tools";
 import { CrewLedger } from "../../src/gk/ledger";
 import type { WorkItem } from "../../src/gk/router";
-import type { RosterEntry, Tier } from "../../src/gk/types";
+import type { CrewPolicy, RosterEntry, Tier } from "../../src/gk/types";
 
 export interface FakeWorker {
 	name: string;
@@ -51,6 +51,8 @@ export class FakeSpawner implements CrewWorkerSpawner {
 export function entry(selector: string, tier: Tier, output: number, extra: Partial<RosterEntry> = {}): RosterEntry {
 	return {
 		selector,
+		provider: selector.split("/")[0]!,
+		openWeight: false,
 		tier,
 		strengths: [],
 		enabled: true,
@@ -90,6 +92,8 @@ export interface Harness {
 	runs: CrewRunContext[];
 	ledgerPath: string;
 	autoApproveSet: boolean[];
+	/** Session policy as the host stores it. */
+	policy: CrewPolicy;
 }
 
 export function harness(
@@ -98,6 +102,7 @@ export function harness(
 		autoApprove?: boolean;
 		maxRunUsd?: number;
 		noUi?: boolean;
+		roster?: RosterEntry[];
 	} = {},
 ): Harness {
 	const spawner = new FakeSpawner();
@@ -105,12 +110,17 @@ export function harness(
 	const runs: CrewRunContext[] = [];
 	const autoApproveSet: boolean[] = [];
 	const ledgerPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "gk-crew-")), "ledger.jsonl");
+	const h = { policy: {} as CrewPolicy };
 	const host: CrewHost = {
-		roster: async () => ROSTER,
+		roster: async () => opts.roster ?? ROSTER,
 		conductor: () => CONDUCTOR,
 		maxRunUsd: () => opts.maxRunUsd,
 		autoApprove: () => opts.autoApprove ?? false,
 		setAutoApprove: on => autoApproveSet.push(on),
+		policy: () => h.policy,
+		setPolicy: policy => {
+			h.policy = policy;
+		},
 		approve: opts.noUi
 			? undefined
 			: async req => {
@@ -122,5 +132,5 @@ export function harness(
 		promptHead: () => "add hello",
 		onRunStart: ctx => runs.push(ctx),
 	};
-	return { crew: new CrewController(host), spawner, requests, runs, ledgerPath, autoApproveSet };
+	return Object.assign(h, { crew: new CrewController(host), spawner, requests, runs, ledgerPath, autoApproveSet });
 }

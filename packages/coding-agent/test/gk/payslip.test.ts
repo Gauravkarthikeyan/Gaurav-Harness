@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { visibleWidth } from "@oh-my-pi/pi-tui";
 import type { CrewRunSummary } from "../../src/gk/crew-runtime";
+import { estimateCostUsd } from "../../src/gk/roster";
+import { conductorEquivalentUsd } from "../../src/gk/router";
 import { renderPayslip } from "../../src/gk/ui/payslip";
 import { sgr } from "./stage/widgets/helpers";
 
@@ -38,6 +40,40 @@ describe("renderPayslip", () => {
 
 	it("states an overrun plainly", () => {
 		expect(renderPayslip(summary(5, 4), 90).join("\n")).toContain("cost $1.00 more than the conductor alone");
+	});
+
+	it("screenshot case: haiku crew under a gpt-6-luna conductor compares like for like", () => {
+		// Conductor $0.1/$0.5, worker $1/$5, one S item: est $0.10 crew vs $0.01 conductor; actual $0.249.
+		const crewEst = estimateCostUsd({ input: 1, output: 5 }, "S");
+		const baseEst = estimateCostUsd({ input: 0.1, output: 0.5 }, "S");
+		const slip: CrewRunSummary = {
+			...summary(0.249, baseEst),
+			items: [{ ...summary(0.249, baseEst).items[0]!, costUsd: 0.249, selector: "anthropic/claude-haiku-4-5" }],
+			crewEstUsd: crewEst,
+			conductorEquivUsd: conductorEquivalentUsd([{ actualUsd: 0.249, estUsd: crewEst, baselineUsd: baseEst }]),
+			conductor: "openai-codex/gpt-6-luna",
+			baselinePlan: false,
+		};
+		const text = renderPayslip(slip, 110).join("\n");
+		expect(text).toContain("actual $0.25 (est $0.10)");
+		expect(text).toContain("same work at its rates ≈$0.02");
+		expect(text).toContain("This run cost $0.22 more than the conductor alone would have (≈$0.02).");
+		expect(text).not.toContain("est $0.01).");
+	});
+
+	it("makes no savings claim for a plan-priced conductor", () => {
+		const slip: CrewRunSummary = { ...summary(0.5, 0), baselinePlan: true, conductor: "sub/plan" };
+		const text = renderPayslip(slip, 110).join("\n");
+		expect(text).toContain("is on a plan, so there is no dollar baseline");
+		expect(text).not.toContain("saved");
+		expect(text).not.toContain("more than");
+	});
+
+	it("never cuts the cost column for long model names", () => {
+		const slip = summary(0.5, 4);
+		slip.items[0]!.selector = "commandcode/moonshotai/Kimi-K2.7-Code-Highspeed-extra-long-name";
+		const row = renderPayslip(slip, 80).find(r => r.includes("W-01"))!;
+		expect(row).toContain("$0.30");
 	});
 
 	it("has one row per item with name, model, state glyph, time and cost", () => {

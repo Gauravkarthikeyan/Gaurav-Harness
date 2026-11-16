@@ -18,6 +18,8 @@ import { renderProc, type ProcRow } from "../stage/widgets/proc";
 import { renderThroughput } from "../stage/widgets/sparkline";
 import { eventRows, type PlanRow, planRows } from "../stage/widgets/transcript-lines";
 import { formatUsd, savingsLabel } from "../ui/casting-board";
+import { estimateCostUsd } from "../roster";
+import { conductorEquivalentUsd } from "../router";
 
 export const W_PROC = "w:proc";
 export const W_DAG = "w:dag";
@@ -284,12 +286,25 @@ export class OrchestraStage implements StageOrchestra {
 	header() {
 		const spent = this.#sources.conductorCostUsd() + this.#workerCost();
 		const max = this.#sources.maxRunUsd();
-		const cast = this.#ctx?.cast;
-		const done = this.#ctx?.run.finished === true;
-		const compare = done ? this.#workerCost() : (cast?.totalEstUsd ?? 0);
-		const saved = cast
-			? `${savingsLabel(compare, cast.baselineEstUsd)} vs ${this.#sources.conductorLabel()}-only est ${money(cast.baselineEstUsd)}`
-			: "plan pending · no estimate yet";
+		const ctx = this.#ctx;
+		const cast = ctx?.cast;
+		let saved = "plan pending · no estimate yet";
+		if (ctx && cast?.baselinePlan) saved = `${this.#sources.conductorLabel()} on a plan · no savings claim`;
+		else if (ctx && cast) {
+			// Finished: actual spend against the same work repriced at the conductor's rates; running: estimates.
+			const done = ctx.run.finished;
+			const baseline = done
+				? conductorEquivalentUsd(
+						ctx.run.snapshot().map(e => ({
+							actualUsd: e.costUsd,
+							estUsd: e.assignment.estCostUsd,
+							baselineUsd: estimateCostUsd(ctx.conductor.cost, e.item.size),
+						})),
+					)
+				: cast.baselineEstUsd;
+			const compare = done ? this.#workerCost() : cast.totalEstUsd;
+			saved = `${savingsLabel(compare, baseline)} vs ${this.#sources.conductorLabel()}-only ${done ? "≈" : "est "}${money(baseline)}`;
+		}
 		return {
 			mode: "ORCHESTRA",
 			cost: {

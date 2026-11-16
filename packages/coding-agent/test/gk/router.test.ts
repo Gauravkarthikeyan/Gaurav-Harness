@@ -1,6 +1,15 @@
 import { describe, expect, it } from "bun:test";
 import { estimateCostUsd } from "../../src/gk/roster";
-import { castCrew, type WorkItem } from "../../src/gk/router";
+import {
+	CrewCastError,
+	castCrew,
+	conductorBaseline,
+	conductorEquivalentUsd,
+	describePolicy,
+	itemFloor,
+	policyViolation,
+	type WorkItem,
+} from "../../src/gk/router";
 import type { RosterEntry, Tier } from "../../src/gk/types";
 
 function entry(
@@ -11,6 +20,8 @@ function entry(
 ): RosterEntry {
 	return {
 		selector,
+		provider: selector.split("/")[0]!,
+		openWeight: false,
 		tier,
 		strengths: [],
 		enabled: true,
@@ -158,5 +169,113 @@ describe("castCrew", () => {
 
 		const otherItem = castCrew([item("x"), item("y")], roster, conductor, { exclude: { y: ["a/t1"] } });
 		expect(otherItem.assignments.map(a => a.selector)).toEqual(["a/t1", "b/t2"]);
+	});
+});
+
+describe("quality-first casting", () => {
+	const cheap = entry("open/llama", 1, { input: 0.1, output: 0.4 }, { openWeight: true });
+	const kimi = entry("cc/kimi", 2, { input: 0.95, output: 4 }, { openWeight: true, strengths: ["frontend"] });
+	const haiku = entry("anthropic/haiku", 2, { input: 1, output: 5 });
+	const fable = entry("cc/fable", 3, { input: 0, output: 0 });
+	const roster = [cheap, kimi, haiku];
+
+	it("never casts frontend, design or architecture work below tier 2, even when tier 1 is cheaper", () => {
+		expect(itemFloor(item("ui", { skills: ["frontend"], difficulty: 1 }))).toBe(2);
+		expect(itemFloor(item("look", { skills: ["design"], difficulty: 1 }))).toBe(2);
+		expect(itemFloor(item("arch", { title: "Architecture for sync", difficulty: 1 }))).toBe(2);
+		expect(itemFloor(item("docs", { skills: ["docs"], difficulty: 1 }))).toBe(1);
+		const [a] = castCrew([item("ui", { skills: ["frontend"] })], roster, conductor).assignments;
+		expect(a!.selector).toBe("cc/kimi");
+		expect(a!.reason).toContain("floor t2");
+	});
+
+	it("preferQuality raises the floor by one, capped by maxTier", () => {
+		expect(itemFloor(item("x"), { preferQuality: true })).toBe(2);
+		expect(itemFloor(item("x", { difficulty: 2 }), { preferQuality: true, maxTier: 2 })).toBe(2);
+	});
+
+	it("uses the conductor's model pick when connected and allowed, noting it", () => {
+		const [a] = castCrew(
+			[item("x", { model: "anthropic/haiku", reason: "steady on tests" })],
+			roster,
+			conductor,
+		).assignments;
+		expect(a).toMatchObject({ selector: "anthropic/haiku", reason: "conductor's pick: steady on tests" });
+	});
+
+	it("falls back to auto-casting when the pick is not connected or breaks the policy", () => {
+		const [missing] = castCrew([item("x", { model: "nope/model" })], roster, conductor).assignments;
+		expect(missing!.selector).toBe("open/llama");
+		expect(missing!.reason).toStartWith("nope/model not connected; ");
+		const [closed] = castCrew([item("x", { model: "anthropic/haiku" })], roster, conductor, {
+			policy: { openWeightOnly: true },
+		}).assignments;
+		expect(closed!.selector).toBe("open/llama");
+		expect(closed!.reason).toContain("closed weights");
+	});
+
+	it("open-weight only skips a free closed frontier model", () => {
+		const [a] = castCrew([item("x", { difficulty: 2 })], [...roster, fable], conductor, {
+			policy: { openWeightOnly: true },
+		}).assignments;
+		expect(a!.selector).toBe("cc/kimi");
+	});
+
+	it("enforces providers, excludeProviders and maxTier", () => {
+		const only = castCrew([item("x")], roster, conductor, { policy: { providers: ["anthropic"] } });
+		expect(only.assignments[0]!.selector).toBe("anthropic/haiku");
+		const not = castCrew([item("x")], roster, conductor, { policy: { excludeProviders: ["open"] } });
+		expect(not.assignments[0]!.selector).toBe("cc/kimi");
+		expect(policyViolation(fable, { maxTier: 2 })).toContain("above policy max tier 2");
+	});
+
+	it("errors with the allowed models when the policy leaves nothing for an item", () => {
+		expect(() =>
+			castCrew([item("hard", { difficulty: 3 })], roster, conductor, { policy: { openWeightOnly: true } }),
+		).toThrow(CrewCastError);
+		try {
+			castCrew([item("hard", { difficulty: 3 })], roster, conductor, { policy: { openWeightOnly: true } });
+		} catch (error) {
+			const message = (error as Error).message;
+			expect(message).toContain("open-weight only");
+			expect(message).toContain("cc/kimi (tier 2, open-weight)");
+			expect(message).toContain("open/llama (tier 1, open-weight)");
+		}
+	});
+
+	it("describes the policy", () => {
+		expect(describePolicy({})).toBe("none");
+		expect(describePolicy({ openWeightOnly: true, providers: ["cc"], maxTier: 2, preferQuality: true })).toBe(
+			"open-weight only · providers cc · max tier 2 · prefer quality",
+		);
+	});
+});
+
+describe("conductor baseline", () => {
+	// Screenshot case: conductor openai-codex/gpt-6-luna ($0.1/$0.5), one S item cast on haiku ($1/$5),
+	// which actually spent $0.249. The payslip claimed "conductor alone est $0.01".
+	const luna = entry("openai-codex/gpt-6-luna", 1, { input: 0.1, output: 0.5 });
+	const haiku = entry("anthropic/claude-haiku-4-5", 2, { input: 1, output: 5 });
+
+	it("prices every item at the conductor's catalog rates on the same size estimates", () => {
+		const items = [item("a", { size: "S" }), item("b", { size: "L" })];
+		const result = castCrew(items, [haiku], luna);
+		expect(result.baselineEstUsd).toBeCloseTo(estimateCostUsd(luna.cost, "S") + estimateCostUsd(luna.cost, "L"), 10);
+		expect(result.baselinePlan).toBe(false);
+	});
+
+	it("a plan-priced conductor has no dollar baseline", () => {
+		const plan = entry("sub/plan", 3, { input: 0, output: 0 });
+		expect(conductorBaseline([item("a")], plan)).toEqual({ usd: 0, plan: true });
+		expect(castCrew([item("a")], [haiku], plan).baselinePlan).toBe(true);
+	});
+
+	it("reprices the crew's actual spend at the conductor's rates", () => {
+		const est = estimateCostUsd(haiku.cost, "S");
+		const base = estimateCostUsd(luna.cost, "S");
+		const equiv = conductorEquivalentUsd([{ actualUsd: 0.249, estUsd: est, baselineUsd: base }]);
+		// Same token mix at luna's rates is a tenth of haiku's: ≈ $0.025, not the $0.01 size estimate.
+		expect(equiv).toBeCloseTo(0.0249, 4);
+		expect(conductorEquivalentUsd([{ actualUsd: 0.3, estUsd: 0, baselineUsd: 0.2 }])).toBe(0.2);
 	});
 });
