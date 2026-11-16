@@ -1,7 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import { stripTerminalSequences } from "@oh-my-pi/pi-tui";
 import { bold } from "../../../../src/gk/stage/widgets/common";
-import { formatBranch, headerWidth, pixelLogo, renderHeader } from "../../../../src/gk/stage/widgets/header";
+import {
+	formatBranch,
+	fullPixelLogo,
+	headerWidth,
+	pixelLogo,
+	renderHeader,
+} from "../../../../src/gk/stage/widgets/header";
 import { renderPaneStatus } from "../../../../src/gk/stage/widgets/pane-status";
 import { renderStatusBar } from "../../../../src/gk/stage/widgets/statusbar";
 import { renderTabs } from "../../../../src/gk/stage/widgets/tabs";
@@ -9,11 +15,18 @@ import * as F from "./fixtures";
 import { expectExact, expectExactAcrossSizes, identity, sgr, trimmed } from "./helpers";
 
 /**
- * Solo header at 212 columns: compact pixel logo, branch `feature/stage-header-overflow-fix` (2 ahead, 24 dirty),
- * and every field beside it.
+ * Solo header at 212 columns, worst case: branch `feature/stage-header-overflow-fix` (2 ahead, 24 dirty), a long
+ * hostname, and a long usage line. The full 3-row pixel logo with every field in 3 rows beside it.
  */
 const GOLDEN_212 = [
-	` │</>│ ▛▘▛▌▌▌▛▖▛▌▌▌▌█▘ ▙▌▛▌▛▖▛▖▛▘█▘█▘  SESSION gk-7f3a2c  HOST Gauravs-MacBook-Pro · arm64  BRANCH feature/stage-hea… ↑2 ±24  SESSION ${bold("$12.34 · 1.2m tok · 345 calls")}  CTX   15% ▕█▁▁▁▁▁▁▁▁▁▏ 148.9k/1.0m    ${bold("03:11:42")}`,
+	` ┌───┐ ▄▀▀▀ ▄▀▀▄ █  █ █▀▀▄ ▄▀▀▄ █   █ █ ▄▀▀▀    █  █ ▄▀▀▄ █▀▀▄ █▄  █ █▀▀▀ ▄▀▀▀ ▄▀▀▀  SESSION gk-7f3a2c  BRANCH feature/stage-hea… ↑2 ±24  SESSION ${bold("$12.34")}                CTX   15% ▕█▁▁▁▁▁▏ 148.9k/1.0m     ${bold("03:11:42")}`,
+	` │</>│ █ ▀█ █▀▀█ █  █ █▀█▀ █▀▀█ ▀▄ ▄▀ ▀ ▀▀▀▄    █▀▀█ █▀▀█ █▀█▀ █▀▀▄█ █▀▀  ▀▀▀▄ ▀▀▀▄  MODE    ● SOLO     HOST   Gauravs-MacBook-Pro        TODAY   $41.07                CACHE 72% hit                    SUN 15 NOV`,
+	` └───┘ ▀▀▀▀ ▀  ▀ ▀▀▀▀ ▀ ▀▀ ▀  ▀  ▀▀▀    ▀▀▀▀    ▀  ▀ ▀  ▀ ▀ ▀▀ ▀  ▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀  UPTIME  01:02:03   CWD    ~/Developer/Gk-code        USAGE   1.2m tok · 345 calls`,
+];
+
+/** The same data on 2 rows with the compact pixel logo (the 180–199 column variant), at 212 so nothing drops. */
+const GOLDEN_COMPACT_212 = [
+	` │</>│ ▛▘▛▌▌▌▛▖▛▌▌▌▌█▘ ▙▌▛▌▛▖▛▖▛▘█▘█▘  SESSION gk-7f3a2c  HOST Gauravs-MacBook-Pro · arm64  BRANCH feature/stage-hea… ↑2 ±24  SESSION ${bold("$12.34")} · 1.2m tok · 345 calls  CTX   15% ▕█▁▁▁▁▁▁▁▁▁▏ 148.9k/1.0m    ${bold("03:11:42")}`,
 	" ╰───╯ ▙▌▛▌▙▌▛▖▛▌▚▘ ▄▌ ▌▌▛▌▛▖▌▌█▖▄▌▄▌  MODE    ● SOLO     CWD  ~/Developer/Gk-code          UPTIME 01:02:03                   TODAY   $41.07                         CACHE 72% hit                       SUN 15 NOV",
 ];
 
@@ -53,18 +66,20 @@ describe("renderHeader", () => {
 	});
 
 	describe("with a long dirty branch (Solo)", () => {
+		const strip = (rows: readonly string[]) => rows.map(row => stripTerminalSequences(row));
 		const solo = {
 			...F.header,
-			logo: pixelLogo(identity, undefined, "truecolor").map(row => stripTerminalSequences(row)),
+			logo: strip(fullPixelLogo(identity, undefined, "truecolor")),
 			mode: "SOLO",
 			host: "Gauravs-MacBook-Pro · arm64",
 			branch: formatBranch("feature/stage-header-overflow-fix", 2, 24),
 			uptime: "01:02:03",
-			cost: { label: "SESSION" as const, spent: "$12.34 · 1.2m tok · 345 calls" },
+			cost: { label: "SESSION" as const, spent: "$12.34", usage: "1.2m tok · 345 calls" },
 			saved: undefined,
 			today: "$41.07",
 			ctx: { used: 148_900, limit: 1_000_000, label: "148.9k/1.0m" },
 		};
+		const compact = { ...solo, logo: strip(pixelLogo(identity, undefined, "truecolor")) };
 
 		it("cuts the branch name and collapses dirty counts", () => {
 			expect(formatBranch("feature/stage-header-overflow-fix", 2, 24)).toBe("feature/stage-hea… ↑2 ±24");
@@ -72,15 +87,22 @@ describe("renderHeader", () => {
 			expect(formatBranch("main", 0, 3)).toBe("main ±3");
 		});
 
-		it("keeps the pixel logo and every field at 212 columns (golden)", () => {
-			expect(solo.logo.map(row => Bun.stringWidth(row))).toEqual([36, 36]);
-			const rows = renderHeader(solo, 212, 2, identity);
-			expectExact(rows, 212, 2);
+		it("keeps the full pixel logo and every field at 212 columns on 3 rows (golden)", () => {
+			expect(solo.logo.map(row => Bun.stringWidth(row))).toEqual([82, 82, 82]);
+			expect(headerWidth(solo, 3)).toBeLessThanOrEqual(212);
+			const rows = renderHeader(solo, 212, 3, identity, 3);
+			expectExact(rows, 212, 3);
 			expect(trimmed(rows)).toEqual(GOLDEN_212);
 		});
 
+		it("keeps the compact pixel logo and every field on 2 rows (golden)", () => {
+			expect(compact.logo.map(row => Bun.stringWidth(row))).toEqual([36, 36]);
+			const rows = renderHeader(compact, 212, 2, identity);
+			expectExact(rows, 212, 2);
+			expect(trimmed(rows)).toEqual(GOLDEN_COMPACT_212);
+		});
+
 		it("keeps every field at 200 columns with the plain text wordmark", () => {
-			expect(headerWidth(solo)).toBeLessThanOrEqual(212);
 			const plainLogo = { ...solo, logo: ["</>  GAURAV'S HARNESS", ""] };
 			expect(headerWidth(plainLogo)).toBeLessThanOrEqual(200);
 			const text = renderHeader(plainLogo, 200, 2, identity).join("\n");
@@ -89,28 +111,43 @@ describe("renderHeader", () => {
 			}
 		});
 
+		it("keeps SAVED and TODAY together in the 3-row cost column (Orchestra)", () => {
+			const orchestra = { ...F.header, uptime: "00:14:22", logo: solo.logo };
+			expect(headerWidth(orchestra, 3)).toBeLessThanOrEqual(212);
+			const rows = renderHeader(orchestra, 212, 3, identity, 3);
+			expect(rows[1]).toContain("SAVED −88% vs opus-only");
+			expect(rows[2]).toContain("TODAY $1.84 · 6 runs");
+			expect(rows[1]!.trimEnd().endsWith("SUN 15 NOV")).toBe(true);
+		});
+
 		it("draws TODAY in the warning colour over budget", () => {
 			const tokens: string[] = [];
-			renderHeader({ ...solo, todayWarning: true }, 212, 2, (token, text) => {
-				if (text === "$41.07") tokens.push(token);
-				return text;
-			});
+			renderHeader(
+				{ ...solo, todayWarning: true },
+				212,
+				3,
+				(token, text) => {
+					if (text === "$41.07") tokens.push(token);
+					return text;
+				},
+				3,
+			);
 			expect(tokens).toEqual(["warning"]);
 		});
 
-		it("puts the budget notice in row 2's free space only when it fits whole", () => {
+		it("puts the budget notice in the last row's free space only when it fits whole", () => {
 			const notice = "! Daily budget reached: $41.07 spent today of $40.00 (gk.budget.dailyUsd)";
 			const warned: string[] = [];
 			const style = (token: string, text: string) => {
 				if (token === "warning") warned.push(text);
 				return text;
 			};
-			const wide = renderHeader({ ...solo, todayWarning: true, notice }, 300, 2, style);
+			const wide = renderHeader({ ...compact, todayWarning: true, notice }, 300, 2, style);
 			expectExact(wide, 300, 2);
 			expect(wide[1]).toContain(`${notice}  SUN 15 NOV`);
 			expect(warned).toContain(notice);
 			// At 212 the fields leave too little room: TODAY still turns warning, nothing is cut mid-word.
-			const tight = renderHeader({ ...solo, todayWarning: true, notice }, 212, 2, identity);
+			const tight = renderHeader({ ...solo, todayWarning: true, notice }, 212, 3, identity, 3);
 			expect(trimmed(tight)).toEqual(GOLDEN_212);
 		});
 	});

@@ -62,7 +62,15 @@ import { agentToken, bold, glyph, type StageToken, type StateGlyph } from "./wid
 import { renderEvents } from "./widgets/events";
 import { type FeedOptions, feedRows, type NestedView, toolBodyRows } from "./widgets/feed";
 import { renderGit } from "./widgets/git";
-import { formatBranch, type HeaderData, headerWidth, LOGO_TEXT, pixelLogo, renderHeader } from "./widgets/header";
+import {
+	formatBranch,
+	fullPixelLogo,
+	type HeaderData,
+	headerWidth,
+	LOGO_TEXT,
+	pixelLogo,
+	renderHeader,
+} from "./widgets/header";
 import { renderPaneStatus } from "./widgets/pane-status";
 import { renderStatusBar } from "./widgets/statusbar";
 import { renderTabs, type TabSummaryItem } from "./widgets/tabs";
@@ -85,7 +93,9 @@ const SAMPLE_EVERY_TICKS = 4; // 2 s telemetry buckets → 30 buckets per 60 s w
 const SERIES_MAX = 60;
 const EVENTS_MAX = 200;
 const GIT_MIN_INTERVAL_MS = 3_000;
-/** From this width the header draws the 2-row pixel wordmark; narrower terminals get the text wordmark. */
+/** From this width the header is 3 rows: the full pixel wordmark beside 3 field rows. */
+const FULL_LOGO_MIN_COLS = 200;
+/** From this width (below {@link FULL_LOGO_MIN_COLS}) the 2-row compact pixel wordmark; narrower, the text one. */
 const PIXEL_LOGO_MIN_COLS = 180;
 const TODAY_REFRESH_MS = 30_000;
 const WHEEL_ROWS = 3;
@@ -253,7 +263,7 @@ export class StageHost {
 	#steering: string | null = null;
 	#narration = "";
 	#orchestra: StageOrchestra | null = null;
-	#logo: { theme: string; rows: string[] } | undefined;
+	#logo: { key: string; rows: string[] } | undefined;
 	#messageIndex: { count: number; calls: Map<string, ToolRecord> } = { count: -1, calls: new Map() };
 	/** TODAY's value once the first read lands (`$3.46`, or `! $12.00 / $10.00` over budget); render never waits on it. */
 	#todayLabel: string | undefined;
@@ -859,7 +869,7 @@ export class StageHost {
 			preset: this.#orchestra ? ("orchestra" as const) : ("calm" as const),
 			tiles,
 			zoomedId: this.#zoomedId,
-			headerRows: 2,
+			headerRows: cols >= FULL_LOGO_MIN_COLS ? 3 : 2,
 			tabRows: 1,
 			footerRows: 2,
 			previous: this.#layout,
@@ -954,13 +964,15 @@ export class StageHost {
 		buf.blit(out, rect);
 	}
 
-	/** {@link pixelLogo} in the theme's gold, cached per theme. */
-	#pixelLogo(): string[] {
+	/** {@link fullPixelLogo} (3 rows) or {@link pixelLogo} (2 rows) in the theme's gold, cached per theme. */
+	#pixelLogo(full: boolean): string[] {
 		const themeName = getCurrentThemeName() ?? "";
-		if (this.#logo?.theme === themeName) return this.#logo.rows;
+		const key = `${themeName}|${full ? "full" : "compact"}`;
+		if (this.#logo?.key === key) return this.#logo.rows;
 		const palette = gkPaletteFor(themeName);
-		const rows = pixelLogo(this.#style, palette ? { face: palette.accent, shadow: palette.pixelShadow } : undefined);
-		this.#logo = { theme: themeName, rows };
+		const colors = palette ? { face: palette.accent, shadow: palette.pixelShadow } : undefined;
+		const rows = full ? fullPixelLogo(this.#style, colors) : pixelLogo(this.#style, colors);
+		this.#logo = { key, rows };
 		return rows;
 	}
 
@@ -973,7 +985,6 @@ export class StageHost {
 
 	/** Header fields without a logo. Reads cached state only (`#todayLabel`, `#git`); never waits on I/O. */
 	#headerData(now: number): HeaderData {
-		const s = this.#style;
 		const session = this.#session;
 		const stats = session?.getSessionStats();
 		const ctx = session?.getContextUsage?.();
@@ -996,7 +1007,8 @@ export class StageHost {
 			uptime: `${pad2(Math.floor(up / 3600))}:${pad2(Math.floor((up % 3600) / 60))}:${pad2(up % 60)}`,
 			cost: {
 				label: "SESSION",
-				spent: `${money(stats?.cost ?? 0)}${s("muted", ` · ${compact(tokens?.total ?? 0)} tok · ${stats?.toolCalls ?? 0} call${stats?.toolCalls === 1 ? "" : "s"}`)}`,
+				spent: money(stats?.cost ?? 0),
+				usage: `${compact(tokens?.total ?? 0)} tok · ${stats?.toolCalls ?? 0} call${stats?.toolCalls === 1 ? "" : "s"}`,
 			},
 			...this.#orchestra?.header(),
 			today: this.#todayLabel ?? "–",
@@ -1050,14 +1062,16 @@ export class StageHost {
 		if (rect.h <= 0) return;
 		this.#band(buf, rect, [], null);
 		const data = this.#headerData(now);
-		if (rect.w >= PIXEL_LOGO_MIN_COLS) {
-			data.logo = this.#pixelLogo();
+		const fieldRows = rect.h >= 3 && rect.w >= FULL_LOGO_MIN_COLS ? 3 : 2;
+		if (fieldRows === 3 || rect.w >= PIXEL_LOGO_MIN_COLS) {
+			data.logo = this.#pixelLogo(fieldRows === 3);
 		} else {
 			// Letter-spaced wordmark only while it leaves room for every field.
 			const spaced = [this.#textLogo(true), ""];
 			data.logo = headerWidth({ ...data, logo: spaced }) <= rect.w ? spaced : [this.#textLogo(false), ""];
 		}
-		buf.blit(renderHeader(data, rect.w, 2, this.#style), { x: rect.x, y: rect.y, w: rect.w, h: 2 });
+		const rows = renderHeader(data, rect.w, fieldRows, this.#style, fieldRows);
+		buf.blit(rows, { x: rect.x, y: rect.y, w: rect.w, h: fieldRows });
 	}
 
 	#tabs(width: number): string[] {
