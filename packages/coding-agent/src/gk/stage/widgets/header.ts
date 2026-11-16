@@ -1,10 +1,24 @@
 /**
  * Stage header: two rows. Pre-rendered logo lines on the left, label/value field columns, clock
- * and date right-aligned. Columns that don't fit are dropped lowest-priority first; at ≥200 columns
- * with the text logo every field fits ({@link headerWidth}).
+ * and date right-aligned. Columns that don't fit are dropped lowest-priority first. With the
+ * {@link pixelLogo} (≥180 columns) every field fits from 212 columns; with the text wordmark, from 200.
  */
 import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
+import { renderCompactPixelText } from "@oh-my-pi/pi-tui/gk/pixel-font";
+import type { ColorMode } from "@oh-my-pi/pi-tui/theme/schema";
 import { bold, frame, gauge, padEnd, padStart, percent, type StageStyle, spread } from "./common";
+
+export const LOGO_TEXT = "GAURAV'S HARNESS";
+
+/** `</>` badge box beside the compact 2-row pixel "GAURAV'S HARNESS": 36 columns × 2 rows. */
+export function pixelLogo(
+	style: StageStyle,
+	colors?: { face: string; shadow: string },
+	colorMode?: ColorMode,
+): [string, string] {
+	const word = renderCompactPixelText(LOGO_TEXT, { colors, colorMode });
+	return [`${style("accent", "│</>│")} ${word[0]}`, `${style("accent", "╰───╯")} ${word[1]}`];
+}
 
 export interface HeaderData {
 	/** Pre-rendered logo rows (may contain SGR); rows beyond two are ignored. */

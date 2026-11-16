@@ -1,17 +1,20 @@
 import { describe, expect, it } from "bun:test";
 import { stripTerminalSequences } from "@oh-my-pi/pi-tui";
 import { bold } from "../../../../src/gk/stage/widgets/common";
-import { formatBranch, headerWidth, renderHeader } from "../../../../src/gk/stage/widgets/header";
+import { formatBranch, headerWidth, pixelLogo, renderHeader } from "../../../../src/gk/stage/widgets/header";
 import { renderPaneStatus } from "../../../../src/gk/stage/widgets/pane-status";
 import { renderStatusBar } from "../../../../src/gk/stage/widgets/statusbar";
 import { renderTabs } from "../../../../src/gk/stage/widgets/tabs";
 import * as F from "./fixtures";
 import { expectExact, expectExactAcrossSizes, identity, sgr, trimmed } from "./helpers";
 
-/** Solo header at 212 columns with branch `feature/stage-header-overflow-fix`, 2 ahead, 24 dirty: every field shows. */
+/**
+ * Solo header at 212 columns: compact pixel logo, branch `feature/stage-header-overflow-fix` (2 ahead, 24 dirty),
+ * and every field beside it.
+ */
 const GOLDEN_212 = [
-	` </>  G A U R A V ' S   H A R N E S S  SESSION gk-7f3a2c  HOST Gauravs-MacBook-Pro · arm64  BRANCH feature/stage-hea… ↑2 ±24  SESSION ${bold("$12.34 · 1.2m tok · 345 calls")}  CTX   15% ▕█▁▁▁▁▁▁▁▁▁▏ 148.9k/1.0m    ${bold("03:11:42")}`,
-	"                                       MODE    ● SOLO     CWD  ~/Developer/Gk-code          UPTIME 01:02:03                   TODAY   $41.07                         CACHE 72% hit                       SUN 15 NOV",
+	` │</>│ ▛▘▛▌▌▌▛▖▛▌▌▌▌█▘ ▙▌▛▌▛▖▛▖▛▘█▘█▘  SESSION gk-7f3a2c  HOST Gauravs-MacBook-Pro · arm64  BRANCH feature/stage-hea… ↑2 ±24  SESSION ${bold("$12.34 · 1.2m tok · 345 calls")}  CTX   15% ▕█▁▁▁▁▁▁▁▁▁▏ 148.9k/1.0m    ${bold("03:11:42")}`,
+	" ╰───╯ ▙▌▛▌▙▌▛▖▛▌▚▘ ▄▌ ▌▌▛▌▛▖▌▌█▖▄▌▄▌  MODE    ● SOLO     CWD  ~/Developer/Gk-code          UPTIME 01:02:03                   TODAY   $41.07                         CACHE 72% hit                       SUN 15 NOV",
 ];
 
 describe("renderHeader", () => {
@@ -52,7 +55,7 @@ describe("renderHeader", () => {
 	describe("with a long dirty branch (Solo)", () => {
 		const solo = {
 			...F.header,
-			logo: ["</>  G A U R A V ' S   H A R N E S S", ""],
+			logo: pixelLogo(identity, undefined, "truecolor").map(row => stripTerminalSequences(row)),
 			mode: "SOLO",
 			host: "Gauravs-MacBook-Pro · arm64",
 			branch: formatBranch("feature/stage-header-overflow-fix", 2, 24),
@@ -69,13 +72,14 @@ describe("renderHeader", () => {
 			expect(formatBranch("main", 0, 3)).toBe("main ±3");
 		});
 
-		it("keeps every field at 212 columns (golden)", () => {
+		it("keeps the pixel logo and every field at 212 columns (golden)", () => {
+			expect(solo.logo.map(row => Bun.stringWidth(row))).toEqual([36, 36]);
 			const rows = renderHeader(solo, 212, 2, identity);
 			expectExact(rows, 212, 2);
 			expect(trimmed(rows)).toEqual(GOLDEN_212);
 		});
 
-		it("keeps every field at ≥200 columns once the logo is unspaced", () => {
+		it("keeps every field at 200 columns with the plain text wordmark", () => {
 			expect(headerWidth(solo)).toBeLessThanOrEqual(212);
 			const plainLogo = { ...solo, logo: ["</>  GAURAV'S HARNESS", ""] };
 			expect(headerWidth(plainLogo)).toBeLessThanOrEqual(200);

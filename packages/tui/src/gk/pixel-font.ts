@@ -5,6 +5,9 @@
  * scale 2 it is 2 columns × 1 row. The optional drop shadow is the face shifted ½ row down and `shadowDx` columns
  * right (default 1: diagonal; 0: straight down, which keeps the one-pixel letter gaps clear at scale 1), painted in a
  * darker tone wherever the face is not.
+ *
+ * {@link renderCompactPixelText} is the 2-row header variant: 3×4 glyphs on quadrant blocks (`▘▝▖▗▌▐▛…`), so a pixel
+ * is ½ column × ½ row and "GAURAV'S HARNESS" fits in 30 columns.
  */
 import { BG_RESET, bgAnsi, detectColorMode, FG_RESET, fgAnsi } from "../theme/color";
 import { GK_NIGHT } from "../theme/gk-palette";
@@ -127,7 +130,11 @@ export function renderPixelText(text: string, opts: PixelTextOptions): string[] 
 	const subWidth = pixelWidth * scale + dx;
 	const subHeight = PIXEL_GLYPH_ROWS * scale + dy;
 	const faceAt = (x: number, y: number): boolean =>
-		x >= 0 && y >= 0 && x < pixelWidth * scale && y < PIXEL_GLYPH_ROWS * scale && face[(y / scale) | 0][(x / scale) | 0];
+		x >= 0 &&
+		y >= 0 &&
+		x < pixelWidth * scale &&
+		y < PIXEL_GLYPH_ROWS * scale &&
+		face[(y / scale) | 0][(x / scale) | 0];
 	const subAt = (x: number, y: number): Sub => {
 		if (y >= subHeight) return Sub.Empty;
 		if (faceAt(x, y)) return Sub.Face;
@@ -171,4 +178,124 @@ export function renderPixelText(text: string, opts: PixelTextOptions): string[] 
 		lines.push(line);
 	}
 	return lines;
+}
+
+/**
+ * 3×4 glyphs for the compact wordmark. Widths are odd so glyph + 1-pixel gap is a whole number of columns and every
+ * gap lands in the right half of a cell, which keeps the shadow strip the same on every letter.
+ */
+const COMPACT_GLYPHS: Record<string, readonly string[]> = {
+	A: ["XXX", "X.X", "XXX", "X.X"],
+	B: ["XX.", "XXX", "X.X", "XXX"],
+	C: ["XXX", "X..", "X..", "XXX"],
+	D: ["XX.", "X.X", "X.X", "XX."],
+	E: ["XXX", "X..", "XX.", "XXX"],
+	F: ["XXX", "X..", "XX.", "X.."],
+	G: ["XXX", "X..", "X.X", "XXX"],
+	H: ["X.X", "XXX", "X.X", "X.X"],
+	I: ["XXX", ".X.", ".X.", "XXX"],
+	J: ["..X", "..X", "X.X", "XXX"],
+	K: ["X.X", "XX.", "X.X", "X.X"],
+	L: ["X..", "X..", "X..", "XXX"],
+	M: ["XXX", "XXX", "X.X", "X.X"],
+	N: ["XX.", "X.X", "X.X", "X.X"],
+	O: ["XXX", "X.X", "X.X", "XXX"],
+	P: ["XXX", "X.X", "XXX", "X.."],
+	Q: ["XXX", "X.X", "XXX", "..X"],
+	R: ["XX.", "X.X", "XX.", "X.X"],
+	S: ["XXX", "XX.", "..X", "XXX"],
+	T: ["XXX", ".X.", ".X.", ".X."],
+	U: ["X.X", "X.X", "X.X", "XXX"],
+	V: ["X.X", "X.X", "X.X", ".X."],
+	W: ["X.X", "X.X", "XXX", "XXX"],
+	X: ["X.X", ".X.", ".X.", "X.X"],
+	Y: ["X.X", "X.X", ".X.", ".X."],
+	Z: ["XXX", "..X", "X..", "XXX"],
+	"'": ["X", "X", ".", "."],
+	" ": [".", ".", ".", "."],
+};
+
+/** Quadrant block per 2×2 mask: top-left 8, top-right 4, bottom-left 2, bottom-right 1. */
+const QUADRANTS = [" ", "▗", "▖", "▄", "▝", "▐", "▞", "▟", "▘", "▚", "▌", "▙", "▀", "▜", "▛", "█"] as const;
+
+function compactGlyph(char: string): readonly string[] {
+	return COMPACT_GLYPHS[char.toUpperCase()] ?? COMPACT_GLYPHS[" "];
+}
+
+/** Terminal columns `renderCompactPixelText` produces: each glyph plus its trailing 1-pixel gap, two pixels a column. */
+export function compactPixelTextWidth(text: string): number {
+	return [...text].reduce((sum, char) => sum + compactGlyph(char)[0].length + 1, 0) / 2;
+}
+
+/**
+ * Render `text` as the 2-row compact pixel wordmark. Each gap pixel right of a lit face pixel is the shadow; a cell
+ * holding face and shadow draws the shadow as its background only when no pixel in it is empty (a cell has two
+ * colours), so every letter gets the same right-hand strip. Lines carry their own SGR and reset at the end.
+ */
+export function renderCompactPixelText(
+	text: string,
+	opts: Pick<PixelTextOptions, "colors" | "colorMode"> = {},
+): [string, string] {
+	const face: boolean[][] = [[], [], [], []];
+	const gap: boolean[] = [];
+	for (const char of text) {
+		const glyph = compactGlyph(char);
+		for (let x = 0; x <= glyph[0].length; x++) {
+			for (let y = 0; y < 4; y++) face[y].push(glyph[y][x] === "X");
+			gap.push(x === glyph[0].length);
+		}
+	}
+	const faceAt = (x: number, y: number): boolean => face[y][x] === true;
+	const shadowAt = (x: number, y: number): boolean => gap[x] === true && faceAt(x - 1, y);
+
+	const mode = opts.colorMode ?? detectColorMode();
+	const colors = opts.colors ?? { face: GK_NIGHT.accent, shadow: GK_NIGHT.pixelShadow };
+	const faceFg = fgAnsi(colors.face, mode);
+	const shadowFg = fgAnsi(colors.shadow, mode);
+	const shadowBg = bgAnsi(colors.shadow, mode);
+	const bits = [8, 4, 2, 1] as const;
+
+	const lines: string[] = [];
+	for (let row = 0; row < 2; row++) {
+		let line = "";
+		let fg = "";
+		let bg = "";
+		for (let x = 0; x < gap.length; x += 2) {
+			const pixels = [
+				[x, row * 2],
+				[x + 1, row * 2],
+				[x, row * 2 + 1],
+				[x + 1, row * 2 + 1],
+			] as const;
+			let faceMask = 0;
+			let shadowMask = 0;
+			pixels.forEach(([px, py], i) => {
+				if (faceAt(px, py)) faceMask |= bits[i];
+				else if (shadowAt(px, py)) shadowMask |= bits[i];
+			});
+			let nextFg = "";
+			let nextBg = "";
+			let glyph: string = QUADRANTS[faceMask];
+			if (faceMask) {
+				nextFg = faceFg;
+				if (shadowMask && (faceMask | shadowMask) === 15) nextBg = shadowBg;
+			} else if (shadowMask) {
+				nextFg = shadowFg;
+				glyph = QUADRANTS[shadowMask];
+			}
+			if (nextBg !== bg) {
+				line += nextBg || BG_RESET;
+				bg = nextBg;
+			}
+			if (nextFg && nextFg !== fg) {
+				line += nextFg;
+				fg = nextFg;
+			}
+			line += glyph;
+		}
+		if (fg) line += FG_RESET;
+		if (bg) line += BG_RESET;
+		lines.push(line);
+	}
+	return [lines[0]!, lines[1]!];
 }

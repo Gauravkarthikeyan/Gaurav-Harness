@@ -20,7 +20,6 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@oh-my-pi/pi-tui";
-import { pixelTextWidth, renderPixelText } from "@oh-my-pi/pi-tui/gk/pixel-font";
 import { parseSgrMouse, type SgrMouseEvent } from "@oh-my-pi/pi-tui/mouse";
 import { gkPaletteFor } from "@oh-my-pi/pi-tui/theme/gk-palette";
 import { getCurrentThemeName, highlightCode } from "@oh-my-pi/pi-tui/theme/theme";
@@ -63,7 +62,7 @@ import { agentToken, bold, glyph, type StageToken, type StateGlyph } from "./wid
 import { renderEvents } from "./widgets/events";
 import { type FeedOptions, feedRows, type NestedView, toolBodyRows } from "./widgets/feed";
 import { renderGit } from "./widgets/git";
-import { formatBranch, type HeaderData, headerWidth, renderHeader } from "./widgets/header";
+import { formatBranch, type HeaderData, headerWidth, LOGO_TEXT, pixelLogo, renderHeader } from "./widgets/header";
 import { renderPaneStatus } from "./widgets/pane-status";
 import { renderStatusBar } from "./widgets/statusbar";
 import { renderTabs, type TabSummaryItem } from "./widgets/tabs";
@@ -86,11 +85,8 @@ const SAMPLE_EVERY_TICKS = 4; // 2 s telemetry buckets → 30 buckets per 60 s w
 const SERIES_MAX = 60;
 const EVENTS_MAX = 200;
 const GIT_MIN_INTERVAL_MS = 3_000;
-const LOGO_TEXT = "GAURAV'S HARNESS";
-/** Badge (5) + gap + wordmark. */
-const BIG_LOGO_WIDTH = 6 + pixelTextWidth(LOGO_TEXT, 1, true, 0);
-/** Columns between the left edge and the header fields when the pixel logo is drawn. */
-const BIG_LOGO_FIELDS_X = 1 + BIG_LOGO_WIDTH + 3;
+/** From this width the header draws the 2-row pixel wordmark; narrower terminals get the text wordmark. */
+const PIXEL_LOGO_MIN_COLS = 180;
 const TODAY_REFRESH_MS = 30_000;
 const WHEEL_ROWS = 3;
 
@@ -863,7 +859,7 @@ export class StageHost {
 			preset: this.#orchestra ? ("orchestra" as const) : ("calm" as const),
 			tiles,
 			zoomedId: this.#zoomedId,
-			headerRows: this.#bigHeader(cols) ? 3 : 2,
+			headerRows: 2,
 			tabRows: 1,
 			footerRows: 2,
 			previous: this.#layout,
@@ -958,34 +954,21 @@ export class StageHost {
 		buf.blit(out, rect);
 	}
 
-	/** `</>` badge + scale-1 pixel wordmark with a straight drop shadow: {@link BIG_LOGO_WIDTH} × 3 rows. */
-	#bigLogo(): string[] {
+	/** {@link pixelLogo} in the theme's gold, cached per theme. */
+	#pixelLogo(): string[] {
 		const themeName = getCurrentThemeName() ?? "";
 		if (this.#logo?.theme === themeName) return this.#logo.rows;
 		const palette = gkPaletteFor(themeName);
-		const s = this.#style;
-		const word = renderPixelText(LOGO_TEXT, {
-			scale: 1,
-			shadow: true,
-			shadowDx: 0,
-			colors: palette ? { face: palette.accent, shadow: palette.pixelShadow } : undefined,
-		});
-		const badge = [s("accent", "┌───┐"), s("accent", "│</>│"), s("accent", "└───┘")];
-		const rows = badge.map((b, i) => `${b} ${word[i] ?? ""}`);
+		const rows = pixelLogo(this.#style, palette ? { face: palette.accent, shadow: palette.pixelShadow } : undefined);
 		this.#logo = { theme: themeName, rows };
 		return rows;
 	}
 
-	/** One-row wordmark for headers too narrow for the pixel logo: bold gold, letter-spaced when asked. */
+	/** One-row wordmark for headers narrower than {@link PIXEL_LOGO_MIN_COLS}: bold gold, letter-spaced when asked. */
 	#textLogo(spaced: boolean): string {
 		const s = this.#style;
 		const word = spaced ? [...LOGO_TEXT].join(" ") : LOGO_TEXT;
 		return `${s("accent", "</>")}  ${s("accent", bold(word))}`;
-	}
-
-	/** The pixel logo (3-row header) only when every header field still fits beside it. */
-	#bigHeader(cols: number): boolean {
-		return headerWidth(this.#headerData(this.#now())) <= cols - BIG_LOGO_FIELDS_X;
 	}
 
 	/** Header fields without a logo. Reads cached state only (`#todayLabel`, `#git`); never waits on I/O. */
@@ -1067,21 +1050,14 @@ export class StageHost {
 		if (rect.h <= 0) return;
 		this.#band(buf, rect, [], null);
 		const data = this.#headerData(now);
-		let fieldsX = 0;
-		if (rect.h >= 3) {
-			const rows = this.#bigLogo();
-			buf.blit(
-				rows.map(r => truncateToWidth(r, BIG_LOGO_WIDTH, undefined, true)),
-				{ x: 1, y: rect.y, w: BIG_LOGO_WIDTH, h: rows.length },
-			);
-			fieldsX = BIG_LOGO_FIELDS_X;
+		if (rect.w >= PIXEL_LOGO_MIN_COLS) {
+			data.logo = this.#pixelLogo();
 		} else {
 			// Letter-spaced wordmark only while it leaves room for every field.
 			const spaced = [this.#textLogo(true), ""];
 			data.logo = headerWidth({ ...data, logo: spaced }) <= rect.w ? spaced : [this.#textLogo(false), ""];
 		}
-		const rows = renderHeader(data, rect.w - fieldsX, 2, this.#style);
-		buf.blit(rows, { x: rect.x + fieldsX, y: rect.y, w: rect.w - fieldsX, h: 2 });
+		buf.blit(renderHeader(data, rect.w, 2, this.#style), { x: rect.x, y: rect.y, w: rect.w, h: 2 });
 	}
 
 	#tabs(width: number): string[] {
