@@ -61,6 +61,20 @@ describe("renderPayslip", () => {
 		expect(text).not.toContain("est $0.01).");
 	});
 
+	it("live-run case: a crew on the conductor's own model claims no savings", () => {
+		// crew-1-mwj4rthr: three items on anthropic/claude-sonnet-5 under a sonnet-5 conductor.
+		const slip: CrewRunSummary = {
+			...summary(0.7317, 0.6),
+			crewEstUsd: 0.6,
+			conductorEquivUsd: 0.7317,
+			conductor: "anthropic/claude-sonnet-5",
+			baselinePlan: false,
+		};
+		const text = renderPayslip(slip, 110).join("\n");
+		expect(text).toContain("Same cost as the conductor alone (≈$0.73)");
+		expect(text).not.toContain("You saved");
+	});
+
 	it("makes no savings claim for a plan-priced conductor", () => {
 		const slip: CrewRunSummary = { ...summary(0.5, 0), baselinePlan: true, conductor: "sub/plan" };
 		const text = renderPayslip(slip, 110).join("\n");

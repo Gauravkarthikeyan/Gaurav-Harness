@@ -41,6 +41,13 @@ export function payslipVerdict(summary: CrewRunSummary): { text: string; saved: 
 	if (!(baseline > 0))
 		return { text: `Spent ${formatUsd(actual)}; no conductor-only figure to compare.`, saved: undefined };
 	const diff = baseline - actual;
+	// Under half a cent either way (e.g. the crew ran on the conductor's own model): no savings claim.
+	if (Math.abs(diff) < 0.005) {
+		return {
+			text: `Same cost as the conductor alone (≈${formatUsd(baseline)}); the crew ran at the conductor's rates.`,
+			saved: undefined,
+		};
+	}
 	if (diff >= 0) {
 		return {
 			text: `You saved ${formatUsd(diff)} (${Math.round((diff / baseline) * 100)}%) vs the conductor alone (≈${formatUsd(baseline)}).`,
