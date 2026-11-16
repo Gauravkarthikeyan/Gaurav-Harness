@@ -25,8 +25,11 @@ import { parseSgrMouse, type SgrMouseEvent } from "@oh-my-pi/pi-tui/mouse";
 import { gkPaletteFor } from "@oh-my-pi/pi-tui/theme/gk-palette";
 import { getCurrentThemeName, highlightCode } from "@oh-my-pi/pi-tui/theme/theme";
 import type { TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
-import { isRecord } from "@oh-my-pi/pi-utils";
+import { isRecord, logger } from "@oh-my-pi/pi-utils";
+import { settings } from "../../config/settings";
 import { formatGkVersion } from "../brand";
+import { budgetNotice, getTodaySpendUsd, localDay } from "../daily-spend";
+import { cfgGkBudgetDailyUsd } from "../settings";
 import type { AgentRef, RegistryEvent } from "../../registry/agent-registry";
 import type { AgentSessionEvent } from "../../session/agent-session-events";
 import { CellBuffer } from "./compositor";
@@ -60,7 +63,7 @@ import { agentToken, bold, glyph, type StageToken, type StateGlyph } from "./wid
 import { renderEvents } from "./widgets/events";
 import { type FeedOptions, feedRows, type NestedView, toolBodyRows } from "./widgets/feed";
 import { renderGit } from "./widgets/git";
-import { renderHeader } from "./widgets/header";
+import { formatBranch, type HeaderData, headerWidth, renderHeader } from "./widgets/header";
 import { renderPaneStatus } from "./widgets/pane-status";
 import { renderStatusBar } from "./widgets/statusbar";
 import { renderTabs, type TabSummaryItem } from "./widgets/tabs";
@@ -84,10 +87,11 @@ const SERIES_MAX = 60;
 const EVENTS_MAX = 200;
 const GIT_MIN_INTERVAL_MS = 3_000;
 const LOGO_TEXT = "GAURAV'S HARNESS";
-const BIG_LOGO_MIN_COLS = 180;
 /** Badge (5) + gap + wordmark. */
 const BIG_LOGO_WIDTH = 6 + pixelTextWidth(LOGO_TEXT, 1, true, 0);
-const SPACED_LOGO_MIN_COLS = 110;
+/** Columns between the left edge and the header fields when the pixel logo is drawn. */
+const BIG_LOGO_FIELDS_X = 1 + BIG_LOGO_WIDTH + 3;
+const TODAY_REFRESH_MS = 30_000;
 const WHEEL_ROWS = 3;
 
 /** What the host reads from the live session (an `AgentSession` satisfies it). */
@@ -147,6 +151,11 @@ export interface StageHostOptions {
 	highlight?: ((code: string, lang: string | undefined) => string[]) | null;
 	/** Point omp's input at an agent's session (`null` = back to main): typing in a zoomed agent pane steers it. */
 	focusAgent?: (agentId: string | null) => void;
+	/**
+	 * TODAY's sources: spend across all sessions and the `gk.budget.dailyUsd` limit. Default reads omp-stats
+	 * session usage and the global settings; `null` leaves TODAY at `–`.
+	 */
+	todaySpend?: { usd: () => Promise<number>; budgetUsd: () => number | undefined } | null;
 }
 
 interface AgentInfo {
@@ -250,6 +259,13 @@ export class StageHost {
 	#orchestra: StageOrchestra | null = null;
 	#logo: { theme: string; rows: string[] } | undefined;
 	#messageIndex: { count: number; calls: Map<string, ToolRecord> } = { count: -1, calls: new Map() };
+	/** TODAY's value once the first read lands (`$3.46`, or `! $12.00 / $10.00` over budget); render never waits on it. */
+	#todayLabel: string | undefined;
+	/** `budgetNotice` text while today's spend is at or over `gk.budget.dailyUsd`. */
+	#todayNotice: string | undefined;
+	/** Local day the budget notice was last posted to the events tail, so it shows once a day. */
+	#budgetNoticeDay: string | undefined;
+	#todayTimer: NodeJS.Timeout | undefined;
 
 	constructor(options: StageHostOptions) {
 		this.#opts = options;
@@ -299,6 +315,11 @@ export class StageHost {
 			this.#timer.unref?.();
 		}
 		this.refreshGit();
+		this.#refreshToday();
+		if (this.#opts.timers !== false) {
+			this.#todayTimer = setInterval(() => this.#refreshToday(), TODAY_REFRESH_MS);
+			this.#todayTimer.unref?.();
+		}
 	}
 
 	stop(): void {
@@ -310,6 +331,8 @@ export class StageHost {
 		this.#unsubInput?.();
 		for (const info of this.#agents.values()) info.unsubscribe?.();
 		clearInterval(this.#timer);
+		clearInterval(this.#todayTimer);
+		this.#todayTimer = undefined;
 		clearTimeout(this.#frameTimer);
 		clearTimeout(this.#streamTimer);
 		this.#timer = undefined;
@@ -382,6 +405,7 @@ export class StageHost {
 					this.#setBusy(false);
 					this.#pending.clear();
 					this.refreshGit();
+					this.#refreshToday();
 				} else {
 					// Calls whose args streamed but never ran (aborted turn) stop spinning.
 					for (const [id, record] of this.#pending) {
@@ -839,7 +863,7 @@ export class StageHost {
 			preset: this.#orchestra ? ("orchestra" as const) : ("calm" as const),
 			tiles,
 			zoomedId: this.#zoomedId,
-			headerRows: cols >= BIG_LOGO_MIN_COLS ? 3 : 2,
+			headerRows: this.#bigHeader(cols) ? 3 : 2,
 			tabRows: 1,
 			footerRows: 2,
 			previous: this.#layout,
@@ -952,29 +976,21 @@ export class StageHost {
 		return rows;
 	}
 
-	/** One-row wordmark for headers too narrow for the pixel logo: bold gold, letter-spaced when it fits. */
-	#textLogo(cols: number): string {
+	/** One-row wordmark for headers too narrow for the pixel logo: bold gold, letter-spaced when asked. */
+	#textLogo(spaced: boolean): string {
 		const s = this.#style;
-		const word = cols >= SPACED_LOGO_MIN_COLS ? [...LOGO_TEXT].join(" ") : LOGO_TEXT;
+		const word = spaced ? [...LOGO_TEXT].join(" ") : LOGO_TEXT;
 		return `${s("accent", "</>")}  ${s("accent", bold(word))}`;
 	}
 
-	#drawHeader(buf: CellBuffer, rect: Rect, now: number): void {
-		if (rect.h <= 0) return;
+	/** The pixel logo (3-row header) only when every header field still fits beside it. */
+	#bigHeader(cols: number): boolean {
+		return headerWidth(this.#headerData(this.#now())) <= cols - BIG_LOGO_FIELDS_X;
+	}
+
+	/** Header fields without a logo. Reads cached state only (`#todayLabel`, `#git`); never waits on I/O. */
+	#headerData(now: number): HeaderData {
 		const s = this.#style;
-		this.#band(buf, rect, [], null);
-		const big = rect.h >= 3;
-		let fieldsX = 0;
-		let logo: string[] = [this.#textLogo(rect.w), ""];
-		if (big) {
-			const rows = this.#bigLogo();
-			buf.blit(
-				rows.map(r => truncateToWidth(r, BIG_LOGO_WIDTH, undefined, true)),
-				{ x: 1, y: rect.y, w: BIG_LOGO_WIDTH, h: rows.length },
-			);
-			fieldsX = 1 + BIG_LOGO_WIDTH + 3;
-			logo = [];
-		}
 		const session = this.#session;
 		const stats = session?.getSessionStats();
 		const ctx = session?.getContextUsage?.();
@@ -986,34 +1002,85 @@ export class StageHost {
 		const up = Math.floor((now - this.#startedAt) / 1000);
 		const home = os.homedir();
 		const cwd = this.#opts.cwd.startsWith(home) ? `~${this.#opts.cwd.slice(home.length)}` : this.#opts.cwd;
-		const rows = renderHeader(
-			{
-				logo,
-				session: `gk-${this.#opts.sessionId().replace(/[^0-9a-z]/gi, "").slice(0, 6).toLowerCase()}`,
-				mode: "SOLO",
-				host: `${os.hostname().replace(/\.local$/, "")} · ${process.arch}`,
-				cwd,
-				branch: this.#git ? branchLabel(this.#git) : "–",
-				uptime: `${pad2(Math.floor(up / 3600))}:${pad2(Math.floor((up % 3600) / 60))}:${pad2(up % 60)}`,
-				cost: {
-					label: "SESSION",
-					spent: `${money(stats?.cost ?? 0)}${s("muted", ` · ${compact(tokens?.total ?? 0)} tok · ${stats?.toolCalls ?? 0} call${stats?.toolCalls === 1 ? "" : "s"}`)}`,
-				},
-				...this.#orchestra?.header(),
-				today: "–",
-				ctx: {
-					used: ctx?.tokens ?? 0,
-					limit: ctx?.contextWindow ?? 0,
-					label: ctx ? `${compact(ctx.tokens)}/${compact(ctx.contextWindow)}` : "–",
-				},
-				cache: cacheBase > 0 ? `${Math.round(((tokens?.cacheRead ?? 0) / cacheBase) * 100)}% hit` : undefined,
-				clock: clockTime(now),
-				date: `${day} ${date.getDate()} ${month}`,
+		const git = this.#git;
+		return {
+			logo: [],
+			session: `gk-${this.#opts.sessionId().replace(/[^0-9a-z]/gi, "").slice(0, 6).toLowerCase()}`,
+			mode: "SOLO",
+			host: `${os.hostname().replace(/\.local$/, "")} · ${process.arch}`,
+			cwd,
+			branch: git ? formatBranch(git.branch, git.ahead, git.changed + git.untracked) : "–",
+			uptime: `${pad2(Math.floor(up / 3600))}:${pad2(Math.floor((up % 3600) / 60))}:${pad2(up % 60)}`,
+			cost: {
+				label: "SESSION",
+				spent: `${money(stats?.cost ?? 0)}${s("muted", ` · ${compact(tokens?.total ?? 0)} tok · ${stats?.toolCalls ?? 0} call${stats?.toolCalls === 1 ? "" : "s"}`)}`,
 			},
-			rect.w - fieldsX,
-			2,
-			s,
-		);
+			...this.#orchestra?.header(),
+			today: this.#todayLabel ?? "–",
+			todayWarning: this.#todayNotice !== undefined,
+			notice: this.#todayNotice,
+			ctx: {
+				used: ctx?.tokens ?? 0,
+				limit: ctx?.contextWindow ?? 0,
+				label: ctx ? `${compact(ctx.tokens)}/${compact(ctx.contextWindow)}` : "–",
+			},
+			cache: cacheBase > 0 ? `${Math.round(((tokens?.cacheRead ?? 0) / cacheBase) * 100)}% hit` : undefined,
+			clock: clockTime(now),
+			date: `${day} ${date.getDate()} ${month}`,
+		};
+	}
+
+	/**
+	 * Re-read today's spend in the background (mount, every 30 s, main-agent turn end). The header shows the
+	 * last value; reaching `gk.budget.dailyUsd` turns TODAY warning-coloured and posts the notice once a day.
+	 */
+	#refreshToday(): void {
+		const source =
+			this.#opts.todaySpend === undefined
+				? { usd: getTodaySpendUsd, budgetUsd: () => cfgGkBudgetDailyUsd.get(settings) }
+				: this.#opts.todaySpend;
+		if (!source) return;
+		source
+			.usd()
+			.then(usd => {
+				const limit = source.budgetUsd();
+				const notice = budgetNotice(usd, limit);
+				this.#todayLabel = notice && limit ? `! ${money(usd)} / ${money(limit)}` : money(usd);
+				this.#todayNotice = notice;
+				const day = localDay(new Date(this.#now()));
+				if (notice && this.#budgetNoticeDay !== day) {
+					this.#budgetNoticeDay = day;
+					this.#pushEvent({
+						at: this.#now(),
+						agent: "budget",
+						agentToken: "warning",
+						glyph: "warning",
+						text: notice,
+					});
+				}
+				this.#changed();
+			})
+			.catch(error => logger.warn("gk stage: today's spend unavailable", { error: String(error) }));
+	}
+
+	#drawHeader(buf: CellBuffer, rect: Rect, now: number): void {
+		if (rect.h <= 0) return;
+		this.#band(buf, rect, [], null);
+		const data = this.#headerData(now);
+		let fieldsX = 0;
+		if (rect.h >= 3) {
+			const rows = this.#bigLogo();
+			buf.blit(
+				rows.map(r => truncateToWidth(r, BIG_LOGO_WIDTH, undefined, true)),
+				{ x: 1, y: rect.y, w: BIG_LOGO_WIDTH, h: rows.length },
+			);
+			fieldsX = BIG_LOGO_FIELDS_X;
+		} else {
+			// Letter-spaced wordmark only while it leaves room for every field.
+			const spaced = [this.#textLogo(true), ""];
+			data.logo = headerWidth({ ...data, logo: spaced }) <= rect.w ? spaced : [this.#textLogo(false), ""];
+		}
+		const rows = renderHeader(data, rect.w - fieldsX, 2, this.#style);
 		buf.blit(rows, { x: rect.x + fieldsX, y: rect.y, w: rect.w - fieldsX, h: 2 });
 	}
 

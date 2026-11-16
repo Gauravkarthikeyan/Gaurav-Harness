@@ -1,8 +1,9 @@
 /**
  * Stage header: two rows. Pre-rendered logo lines on the left, label/value field columns, clock
- * and date right-aligned. Columns that don't fit are dropped lowest-priority first.
+ * and date right-aligned. Columns that don't fit are dropped lowest-priority first; at ≥200 columns
+ * with the text logo every field fits ({@link headerWidth}).
  */
-import { visibleWidth } from "@oh-my-pi/pi-tui";
+import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import { bold, frame, gauge, padEnd, padStart, percent, type StageStyle, spread } from "./common";
 
 export interface HeaderData {
@@ -31,6 +32,10 @@ export interface HeaderData {
 	saved?: string;
 	/** e.g. `$1.84 · 6 runs`. */
 	today: string;
+	/** Today's spend reached `gk.budget.dailyUsd`: TODAY is drawn in the warning colour. */
+	todayWarning?: boolean;
+	/** Warning text (the daily-budget notice) drawn whole in row 2's free space before the date, or not at all. */
+	notice?: string;
 	ctx: { used: number; limit: number; label: string };
 	/** e.g. `81% hit · ttft 1.2s`. */
 	cache?: string;
@@ -45,8 +50,29 @@ interface Column {
 	priority: number;
 }
 
-const COLUMN_GAP = 3;
+const COLUMN_GAP = 2;
 const BAR_CELLS = 10;
+/** Branch names longer than this are cut with `…` so CTX and HOST keep their columns. */
+export const BRANCH_NAME_MAX = 18;
+const HOST_MAX = 28;
+const CWD_MAX = 28;
+
+/** `main ↑2 ±7`: the branch cut to {@link BRANCH_NAME_MAX} columns, commits ahead, and changed + untracked files. */
+export function formatBranch(name: string, ahead: number, dirty: number): string {
+	let label = truncateToWidth(name, BRANCH_NAME_MAX);
+	if (ahead > 0) label += ` ↑${ahead}`;
+	if (dirty > 0) label += ` ±${dirty}`;
+	return label;
+}
+
+/** Keep the tail of a path: `…/Developer/Gk-code`. */
+function cutLeft(text: string, max: number): string {
+	if (visibleWidth(text) <= max) return text;
+	const chars = [...text];
+	let tail = "";
+	for (let i = chars.length - 1; i >= 0 && visibleWidth(chars[i] + tail) <= max - 1; i--) tail = chars[i] + tail;
+	return `…${tail}`;
+}
 
 function budgetToken(fraction: number): "success" | "warning" | "error" {
 	if (fraction >= 1) return "error";
@@ -56,13 +82,22 @@ function budgetToken(fraction: number): "success" | "warning" | "error" {
 
 function renderColumn(col: Column, style: StageStyle): [string, string, number] {
 	const labelW = Math.max(...col.cells.map(([l]) => visibleWidth(l)));
-	const rows = col.cells.map(([label, value]) => (label ? `${style("muted", padEnd(label, labelW))} ${value}` : value));
+	const rows = col.cells.map(([label, value]) =>
+		label ? `${style("muted", padEnd(label, labelW))} ${value}` : value,
+	);
 	while (rows.length < 2) rows.push("");
 	const width = Math.max(...rows.map(r => visibleWidth(r)));
 	return [padEnd(rows[0]!, width), padEnd(rows[1]!, width), width];
 }
 
-export function renderHeader(data: HeaderData, width: number, height: number, style: StageStyle): string[] {
+interface HeaderParts {
+	columns: Column[];
+	right0: string;
+	right1: string;
+	rightW: number;
+}
+
+function headerParts(data: HeaderData, style: StageStyle): HeaderParts {
 	const { cost, ctx } = data;
 	let costValue = style("text", bold(cost.spent));
 	if (cost.budget) costValue += style("muted", ` / ${cost.budget}`);
@@ -71,9 +106,8 @@ export function renderHeader(data: HeaderData, width: number, height: number, st
 	}
 	const ctxFraction = ctx.limit > 0 ? ctx.used / ctx.limit : 0;
 	const ctxValue = `${style("text", percent(ctxFraction))} ${gauge(ctxFraction, BAR_CELLS, "info", style)} ${style("muted", ctx.label)}`;
-	const costRow2: [string, string] = data.saved
-		? ["SAVED", style("success", data.saved)]
-		: ["TODAY", style("text", data.today)];
+	const today = style(data.todayWarning ? "warning" : "text", data.today);
+	const costRow2: [string, string] = data.saved ? ["SAVED", style("success", data.saved)] : ["TODAY", today];
 
 	const columns: Column[] = [
 		{
@@ -85,8 +119,8 @@ export function renderHeader(data: HeaderData, width: number, height: number, st
 		},
 		{
 			cells: [
-				["HOST", style("text", data.host)],
-				["CWD", style("text", data.cwd)],
+				["HOST", style("text", truncateToWidth(data.host, HOST_MAX))],
+				["CWD", style("text", cutLeft(data.cwd, CWD_MAX))],
 			],
 			priority: 1,
 		},
@@ -112,10 +146,24 @@ export function renderHeader(data: HeaderData, width: number, height: number, st
 	const dateText = data.saved ? `TODAY ${data.today} · ${data.date}` : data.date;
 	const right0 = style("text", bold(data.clock));
 	const right1 = data.saved
-		? `${style("muted", "TODAY")} ${style("text", data.today)} ${style("dim", "·")} ${style("muted", data.date)}`
+		? `${style("muted", "TODAY")} ${today} ${style("dim", "·")} ${style("muted", data.date)}`
 		: style("muted", data.date);
 	const rightW = Math.max(visibleWidth(data.clock), visibleWidth(dateText));
+	return { columns, right0, right1, rightW };
+}
 
+const plain: StageStyle = (_token, text) => text;
+
+/** Columns needed to show the logo and every field column without dropping any. */
+export function headerWidth(data: HeaderData): number {
+	const { columns, rightW } = headerParts(data, plain);
+	const logoW = Math.max(0, ...data.logo.slice(0, 2).map(l => visibleWidth(l)));
+	const parts = [...(logoW > 0 ? [logoW] : []), ...columns.map(c => renderColumn(c, plain)[2])];
+	return 1 + parts.reduce((sum, w) => sum + w, 0) + COLUMN_GAP * parts.length + rightW + 1;
+}
+
+export function renderHeader(data: HeaderData, width: number, height: number, style: StageStyle): string[] {
+	const { columns, right0, right1, rightW } = headerParts(data, style);
 	const logoW = Math.max(0, ...data.logo.slice(0, 2).map(l => visibleWidth(l)));
 	const rendered = columns.map(c => renderColumn(c, style));
 
@@ -133,14 +181,20 @@ export function renderHeader(data: HeaderData, width: number, height: number, st
 			budget -= need;
 		}
 	}
-
 	const gap = " ".repeat(COLUMN_GAP);
 	const rows: string[] = [];
 	for (let r = 0; r < 2; r++) {
 		const parts: string[] = showLogo ? [padEnd(data.logo[r] ?? "", logoW)] : [];
 		for (let i = 0; i < rendered.length; i++) if (keep.has(i)) parts.push(rendered[i]![r as 0 | 1]);
-		const right = `${padStart(r === 0 ? right0 : right1, rightW)} `;
-		rows.push(spread(` ${parts.join(gap)}`, right, width));
+		let left = ` ${parts.join(gap)}`;
+		let right = `${padStart(r === 0 ? right0 : right1, rightW)} `;
+		// Column padding is free space too: measure the notice's room from the last visible cell.
+		const room = width - visibleWidth(left.trimEnd()) - visibleWidth(right) - 2 * COLUMN_GAP;
+		if (r === 1 && data.notice && visibleWidth(data.notice) <= room) {
+			left = left.trimEnd();
+			right = `${style("warning", data.notice)}${gap}${right}`;
+		}
+		rows.push(spread(left, right, width));
 	}
 	return frame(rows, width, height);
 }

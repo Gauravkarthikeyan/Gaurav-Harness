@@ -1,20 +1,26 @@
 import { describe, expect, it } from "bun:test";
 import { stripTerminalSequences } from "@oh-my-pi/pi-tui";
 import { bold } from "../../../../src/gk/stage/widgets/common";
-import { renderHeader } from "../../../../src/gk/stage/widgets/header";
+import { formatBranch, headerWidth, renderHeader } from "../../../../src/gk/stage/widgets/header";
 import { renderPaneStatus } from "../../../../src/gk/stage/widgets/pane-status";
 import { renderStatusBar } from "../../../../src/gk/stage/widgets/statusbar";
 import { renderTabs } from "../../../../src/gk/stage/widgets/tabs";
 import * as F from "./fixtures";
 import { expectExact, expectExactAcrossSizes, identity, sgr, trimmed } from "./helpers";
 
+/** Solo header at 212 columns with branch `feature/stage-header-overflow-fix`, 2 ahead, 24 dirty: every field shows. */
+const GOLDEN_212 = [
+	` </>  G A U R A V ' S   H A R N E S S  SESSION gk-7f3a2c  HOST Gauravs-MacBook-Pro · arm64  BRANCH feature/stage-hea… ↑2 ±24  SESSION ${bold("$12.34 · 1.2m tok · 345 calls")}  CTX   15% ▕█▁▁▁▁▁▁▁▁▁▏ 148.9k/1.0m    ${bold("03:11:42")}`,
+	"                                       MODE    ● SOLO     CWD  ~/Developer/Gk-code          UPTIME 01:02:03                   TODAY   $41.07                         CACHE 72% hit                       SUN 15 NOV",
+];
+
 describe("renderHeader", () => {
 	it("lays out logo, field columns and the clock block", () => {
 		const rows = renderHeader(F.header, 160, 2, identity);
 		expectExact(rows, 160, 2);
 		expect(trimmed(rows)).toEqual([
-			` </> GK   SESSION gk-7f3a2c     BRANCH main ↑2 ✱4 ?1          RUN   ${bold("$0.42")} / $2.00 ▕██▁▁▁▁▁▁▁▁▏ 21%${" ".repeat(53)}${bold("03:11:42")}`,
-			`     ──   MODE    ● ORCHESTRA   UPTIME 00:14:22 · pid 48190   SAVED −88% vs opus-only${" ".repeat(41)}TODAY $1.84 · 6 runs · SUN 15 NOV`,
+			` </> GK  SESSION gk-7f3a2c    HOST MacBook-Air · arm64  BRANCH main ↑2 ✱4 ?1         RUN   ${bold("$0.42")} / $2.00 ▕██▁▁▁▁▁▁▁▁▏ 21%${" ".repeat(30)}${bold("03:11:42")}`,
+			`     ──  MODE    ● ORCHESTRA  CWD  ~/Developer/Gk-code  UPTIME 00:14:22 · pid 48190  SAVED −88% vs opus-only${" ".repeat(18)}TODAY $1.84 · 6 runs · SUN 15 NOV`,
 		]);
 	});
 
@@ -26,7 +32,8 @@ describe("renderHeader", () => {
 		expect(wide).toContain("34k/200k");
 		const narrow = renderHeader(F.header, 90, 2, identity).join("\n");
 		expect(narrow).toContain("SESSION");
-		expect(narrow).not.toContain("HOST");
+		expect(narrow).not.toContain("CTX");
+		expect(narrow).not.toContain("BRANCH");
 		expect(narrow).toContain("03:11:42");
 	});
 
@@ -40,6 +47,68 @@ describe("renderHeader", () => {
 		expect(rows[1]).toContain("TODAY   $1.84 · 6 runs");
 		expect(rows[1]!.trimEnd().endsWith("SUN 15 NOV")).toBe(true);
 		expect(rows[0]).toContain(`SESSION ${bold("$0.27")}`);
+	});
+
+	describe("with a long dirty branch (Solo)", () => {
+		const solo = {
+			...F.header,
+			logo: ["</>  G A U R A V ' S   H A R N E S S", ""],
+			mode: "SOLO",
+			host: "Gauravs-MacBook-Pro · arm64",
+			branch: formatBranch("feature/stage-header-overflow-fix", 2, 24),
+			uptime: "01:02:03",
+			cost: { label: "SESSION" as const, spent: "$12.34 · 1.2m tok · 345 calls" },
+			saved: undefined,
+			today: "$41.07",
+			ctx: { used: 148_900, limit: 1_000_000, label: "148.9k/1.0m" },
+		};
+
+		it("cuts the branch name and collapses dirty counts", () => {
+			expect(formatBranch("feature/stage-header-overflow-fix", 2, 24)).toBe("feature/stage-hea… ↑2 ±24");
+			expect(formatBranch("main", 0, 0)).toBe("main");
+			expect(formatBranch("main", 0, 3)).toBe("main ±3");
+		});
+
+		it("keeps every field at 212 columns (golden)", () => {
+			const rows = renderHeader(solo, 212, 2, identity);
+			expectExact(rows, 212, 2);
+			expect(trimmed(rows)).toEqual(GOLDEN_212);
+		});
+
+		it("keeps every field at ≥200 columns once the logo is unspaced", () => {
+			expect(headerWidth(solo)).toBeLessThanOrEqual(212);
+			const plainLogo = { ...solo, logo: ["</>  GAURAV'S HARNESS", ""] };
+			expect(headerWidth(plainLogo)).toBeLessThanOrEqual(200);
+			const text = renderHeader(plainLogo, 200, 2, identity).join("\n");
+			for (const label of ["SESSION", "MODE", "HOST", "CWD", "BRANCH", "UPTIME", "TODAY", "CTX", "CACHE"]) {
+				expect(text).toContain(label);
+			}
+		});
+
+		it("draws TODAY in the warning colour over budget", () => {
+			const tokens: string[] = [];
+			renderHeader({ ...solo, todayWarning: true }, 212, 2, (token, text) => {
+				if (text === "$41.07") tokens.push(token);
+				return text;
+			});
+			expect(tokens).toEqual(["warning"]);
+		});
+
+		it("puts the budget notice in row 2's free space only when it fits whole", () => {
+			const notice = "! Daily budget reached: $41.07 spent today of $40.00 (gk.budget.dailyUsd)";
+			const warned: string[] = [];
+			const style = (token: string, text: string) => {
+				if (token === "warning") warned.push(text);
+				return text;
+			};
+			const wide = renderHeader({ ...solo, todayWarning: true, notice }, 300, 2, style);
+			expectExact(wide, 300, 2);
+			expect(wide[1]).toContain(`${notice}  SUN 15 NOV`);
+			expect(warned).toContain(notice);
+			// At 212 the fields leave too little room: TODAY still turns warning, nothing is cut mid-word.
+			const tight = renderHeader({ ...solo, todayWarning: true, notice }, 212, 2, identity);
+			expect(trimmed(tight)).toEqual(GOLDEN_212);
+		});
 	});
 
 	it("is width/height exact with styled text", () => {
@@ -129,9 +198,9 @@ describe("renderPaneStatus", () => {
 			"⎇ main ●  ✱ gpt-5.6-luna · high  § 15.1k tok  $0.00  ◷ 15,140 (6%)",
 			"-- INSERT --  tools 3 · edits 1 file",
 		]);
-		expect(trimmed(renderPaneStatus({ modeLine: { mode: "INSERT", tools: 0, editedFiles: 2 } }, 60, 2, identity))[1]).toBe(
-			"-- INSERT --  tools 0 · edits 2 files",
-		);
+		expect(
+			trimmed(renderPaneStatus({ modeLine: { mode: "INSERT", tools: 0, editedFiles: 2 } }, 60, 2, identity))[1],
+		).toBe("-- INSERT --  tools 0 · edits 2 files");
 	});
 
 	it("is width/height exact with styled text", () => {
