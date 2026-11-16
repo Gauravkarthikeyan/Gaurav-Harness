@@ -1,0 +1,1 @@
+Moves `item` to another model (exact selector from `crew_models`). A waiting item just switches; a running or failed item's worker is stopped and the item restarts on the new model with your `note` and the previous worker's report, picking up from the files as they are. Done and cancelled items are refused (add a new item instead). The crew policy applies.

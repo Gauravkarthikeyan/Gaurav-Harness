@@ -15,13 +15,13 @@ import type { AgentSession } from "../session/agent-session";
 import { CrewLedger } from "./ledger";
 import { type CrewApproval, type CrewApprovalRequest, CrewController, createCrewTools } from "./crew-tools";
 import { OrchestraStage } from "./orchestra/stage-adapter";
-import { availableRosterModels, buildRoster, defaultTier, getRosterPath, loadRosterOverrides } from "./roster";
+import { availableRosterModels, buildRoster, getRosterPath, loadRosterOverrides } from "./roster";
 import { cfgGkOrchestraAutoApprove, cfgGkOrchestraMaxRunUsd } from "./settings";
 import { AgentRegistry } from "../registry/agent-registry";
 import type { StageHost } from "./stage/host";
 import { modelLabel } from "./stage/host";
 import { themeStyle } from "./stage/style";
-import type { RosterEntry } from "./types";
+import type { CrewPolicy, RosterEntry } from "./types";
 import { CastingBoard } from "./ui/casting-board";
 import { PayslipComponent } from "./ui/payslip";
 
@@ -36,6 +36,9 @@ export interface OrchestraModeHost {
 	addTranscriptBlock(component: Component): void;
 	/** Open the worker scope crew sessions spawn into; the returned teardown kills them and reports how many. */
 	openWorkerScope(): () => Promise<number>;
+	/** Session crew policy; outlives Orchestra mode so `/crew policy` and re-entry keep it. */
+	crewPolicy(): CrewPolicy;
+	setCrewPolicy(policy: CrewPolicy): void;
 }
 
 function selectorOf(model: Pick<Model, "provider" | "id">): string {
@@ -83,6 +86,11 @@ export class OrchestraMode {
 			},
 			autoApprove: () => cfgGkOrchestraAutoApprove.get(settings),
 			setAutoApprove: on => cfgGkOrchestraAutoApprove.set(settings, on),
+			policy: () => host.crewPolicy(),
+			setPolicy: policy => {
+				host.setCrewPolicy(policy);
+				host.ui.requestRender();
+			},
 			approve: (request, signal) => this.#approve(request, signal),
 			spawner: () => {
 				const spawner = session.createCrewSpawner();
@@ -169,34 +177,35 @@ export class OrchestraMode {
 		}
 	}
 
-	async #fullRoster(): Promise<RosterEntry[]> {
+	/** Every connected model (disabled roster entries included: the router skips them, the picker shows them). */
+	async #roster(): Promise<RosterEntry[]> {
 		const overrides = await loadRosterOverrides(getRosterPath());
-		return buildRoster(availableRosterModels(this.#host.session.modelRegistry), overrides);
+		const perf = this.#host.settings.getStorage()?.getModelPerf() ?? new Map();
+		this.#rosterCache = buildRoster(availableRosterModels(this.#host.session.modelRegistry, perf), overrides);
+		return this.#rosterCache;
 	}
 
 	#rosterCache: RosterEntry[] = [];
 
-	async #roster(): Promise<RosterEntry[]> {
-		this.#rosterCache = await this.#fullRoster();
-		return this.#rosterCache.filter(entry => entry.enabled);
-	}
-
+	/** The conductor priced from the catalog (its roster entry when connected), for baselines and fallback. */
 	#conductorEntry(): RosterEntry {
 		const model = this.#host.session.model;
 		if (!model) throw new Error("No conductor model; run /login or set the conductor role.");
 		const selector = selectorOf(model);
 		const listed = this.#rosterCache.find(entry => entry.selector === selector);
 		if (listed) return listed;
-		const { tier, planIncluded } = defaultTier(model.cost.output);
-		return {
-			selector,
-			tier,
-			strengths: [],
-			enabled: true,
-			maxConcurrent: 2,
-			planIncluded,
-			cost: { input: model.cost.input, output: model.cost.output },
-		};
+		return buildRoster(
+			[
+				{
+					selector,
+					provider: model.provider,
+					id: model.id,
+					cost: { input: model.cost.input, output: model.cost.output },
+					contextWindow: model.contextWindow ?? undefined,
+				},
+			],
+			[],
+		)[0]!;
 	}
 
 	/** Casting Board as a centered modal over the Stage; resolves when Gaurav decides. */

@@ -3,7 +3,7 @@ import { visibleWidth } from "@oh-my-pi/pi-tui";
 import type { CrewApprovalRequest } from "../../src/gk/crew-tools";
 import { castCrew, type WorkItem } from "../../src/gk/router";
 import { CastingBoard, formatUsd, savingsLabel } from "../../src/gk/ui/casting-board";
-import { CONDUCTOR, item, ROSTER, tick } from "./crew-fixtures";
+import { CONDUCTOR, entry, item, ROSTER, tick } from "./crew-fixtures";
 import { sgr } from "./stage/widgets/helpers";
 
 const ENTER = "\r";
@@ -117,12 +117,84 @@ describe("CastingBoard", () => {
 			reason: "chosen on the Casting Board",
 		});
 		board.handleInput(ESC);
-		expect(await board.result).toMatchObject({ approved: false });
+		for (const ch of "cheaper") board.handleInput(ch);
+		board.handleInput(ENTER);
+		// The rejection carries the hand-picked row so the conductor keeps it.
+		expect(await board.result).toEqual({
+			approved: false,
+			note: "cheaper",
+			edits: [{ itemId: "W-01", selector: "mid/two" }],
+		});
 	});
 
 	it("a approves and turns on auto-approve", async () => {
 		const board = new CastingBoard(request());
 		board.handleInput("a");
 		expect(await board.result).toMatchObject({ approved: true, autoApprove: true });
+	});
+
+	it("shows the policy on top and the casting reason under every row", () => {
+		const req = { ...request(), policy: { openWeightOnly: true } };
+		const text = new CastingBoard(req).render(120).join("\n");
+		expect(text).toContain("policy open-weight only");
+		for (const a of req.cast.assignments) expect(text).toContain(a.reason);
+	});
+
+	it("picker filters: search, open-weight only, tier", () => {
+		const roster = [
+			...ROSTER,
+			entry("open/qwen-coder", 2, 2, { openWeight: true }),
+			entry("open/llama", 1, 0.5, { openWeight: true }),
+		];
+		const board = new CastingBoard({ ...request(), roster });
+		board.handleInput("e");
+		board.handleInput("\x0f"); // ctrl+o
+		let text = board.render(120).join("\n");
+		expect(text).toContain("open/llama");
+		expect(text).toContain("open/qwen-coder");
+		expect(text).not.toContain("top/three");
+		for (const ch of "qwen") board.handleInput(ch);
+		text = board.render(120).join("\n");
+		expect(text).not.toContain("open/llama");
+		board.handleInput(ENTER);
+		expect(board.cast().assignments[0]!.selector).toBe("open/qwen-coder");
+	});
+
+	it("p re-casts under open-weight only and approves with that run policy", async () => {
+		const roster = [...ROSTER, entry("open/llama", 1, 0.5, { openWeight: true })];
+		const items = [item("W-01"), item("W-02")];
+		const req: CrewApprovalRequest = {
+			...request(items),
+			roster,
+			recast: policy => castCrew(items, roster, CONDUCTOR, { policy }),
+		};
+		const board = new CastingBoard(req);
+		board.handleInput("p");
+		expect(board.cast().assignments.map(a => a.selector)).toEqual(["open/llama", "open/llama"]);
+		expect(board.render(120).join("\n")).toContain("policy open-weight only");
+		board.handleInput(ENTER);
+		expect(await board.result).toMatchObject({ approved: true, policy: { openWeightOnly: true } });
+	});
+
+	it("p reports when nothing open-weight can take the items, and keeps the cast", () => {
+		const items = [item("W-01")];
+		const req: CrewApprovalRequest = {
+			...request(items),
+			recast: policy => castCrew(items, ROSTER, CONDUCTOR, { policy }),
+		};
+		const board = new CastingBoard(req);
+		board.handleInput("p");
+		expect(board.cast().assignments[0]!.selector).toBe("cheap/one");
+		expect(board.render(120).join("\n")).toContain("No connected model satisfies the crew policy");
+	});
+
+	it("a plan-priced conductor shows no savings claim", () => {
+		const conductor = entry("sub/conductor", 3, 0, { planIncluded: true, cost: { input: 0, output: 0 } });
+		const items = [item("W-01")];
+		const cast = castCrew(items, ROSTER, conductor);
+		const text = new CastingBoard({ ...request(items), cast, conductor }).render(120).join("\n");
+		expect(text).toContain("is on a plan");
+		expect(text).not.toContain("saves");
+		expect(text).not.toContain("more than the conductor");
 	});
 });

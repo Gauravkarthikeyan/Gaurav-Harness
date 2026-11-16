@@ -1,1 +1,1 @@
-Sends a message to the worker on `item`: steers it mid-turn, or starts its next turn when idle. Use it for small fixes after you read the worker's changes, with exact instructions. The reply delivers itself.
+Sends a message to the worker on `item`: answers its `ask_conductor` question when it is waiting on one, steers it mid-turn, or starts its next turn when idle. Use it for answers and for concrete fix-up rounds after you read the worker's changes: name the file, what is wrong, and the acceptance criterion it misses. The reply delivers itself.

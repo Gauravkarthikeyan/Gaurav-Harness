@@ -1,29 +1,48 @@
 /**
- * Orchestra crew tools (spec §5.4): the conductor's whole non-read surface. `crew_plan` validates a plan,
- * casts it onto the roster, asks for approval on the Casting Board and starts a {@link CrewRun}; the rest
- * steer, watch, escalate and stop the run's workers. {@link CrewController} holds the run state so the
- * tools stay thin and the Stage can read the same run.
+ * Orchestra crew tools (spec §5.4): the conductor's whole non-read surface. `crew_models` shows every
+ * connected model, `crew_policy` records Gaurav's casting rules, `crew_plan` validates a plan, casts it,
+ * asks for approval on the Casting Board and starts a {@link CrewRun}; `crew_add` / `crew_reassign` grow
+ * and re-cast a live run; the rest steer, watch, escalate and stop the run's workers.
+ * {@link CrewController} holds the run state so the tools stay thin and the Stage can read the same run.
  */
 import { type } from "@oh-my-pi/omptype";
 import type { AgentTool, AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
 import { prompt } from "@oh-my-pi/pi-utils";
+import crewAddDescription from "../prompts/tools/crew-add.md" with { type: "text" };
 import crewEscalateDescription from "../prompts/tools/crew-escalate.md" with { type: "text" };
 import crewKillDescription from "../prompts/tools/crew-kill.md" with { type: "text" };
+import crewModelsDescription from "../prompts/tools/crew-models.md" with { type: "text" };
 import crewPlanDescription from "../prompts/tools/crew-plan.md" with { type: "text" };
+import crewPolicyDescription from "../prompts/tools/crew-policy.md" with { type: "text" };
+import crewReassignDescription from "../prompts/tools/crew-reassign.md" with { type: "text" };
 import crewSendDescription from "../prompts/tools/crew-send.md" with { type: "text" };
 import crewStatusDescription from "../prompts/tools/crew-status.md" with { type: "text" };
 import crewWaitDescription from "../prompts/tools/crew-wait.md" with { type: "text" };
 import { generateTaskName } from "../task/name-generator";
 import { type CrewItemSnapshot, type CrewItemState, CrewRun, type CrewWorkerSpawner } from "./crew-runtime";
 import type { CrewLedger } from "./ledger";
+import { formatModelTable, type ModelFilter } from "./model-table";
 import { validateCrewPlan } from "./plan-validate";
-import { type Assignment, type CastResult, castCrew, type WorkItem } from "./router";
-import type { RosterEntry, Tier } from "./types";
+import {
+	type Assignment,
+	type CastResult,
+	CrewCastError,
+	castCrew,
+	describePolicy,
+	entryCost,
+	policyViolation,
+	type WorkItem,
+} from "./router";
+import type { CrewPolicy, RosterEntry, Tier } from "./types";
 import { formatUsd as usd } from "./ui/casting-board";
 
 export const CREW_TOOL_NAMES = [
+	"crew_models",
+	"crew_policy",
 	"crew_plan",
+	"crew_add",
+	"crew_reassign",
 	"crew_send",
 	"crew_wait",
 	"crew_status",
@@ -31,19 +50,32 @@ export const CREW_TOOL_NAMES = [
 	"crew_kill",
 ] as const;
 
-export type CrewApproval =
-	| { approved: true; cast: CastResult; autoApprove?: boolean }
-	| { approved: false; note: string };
+/** A board row Gaurav re-cast by hand. */
+export interface BoardEdit {
+	itemId: string;
+	selector: string;
+}
 
-/** What the Casting Board shows for one plan. */
+export type CrewApproval =
+	| { approved: true; cast: CastResult; autoApprove?: boolean; policy?: CrewPolicy }
+	| { approved: false; note: string; edits?: BoardEdit[]; dropped?: string[] };
+
+/** What the Casting Board shows for one plan (or one `crew_add`). */
 export interface CrewApprovalRequest {
 	planNumber: number;
 	items: WorkItem[];
 	cast: CastResult;
 	names: Record<string, string>;
+	/** Every connected model (disabled roster entries included; the picker can show them). */
 	roster: RosterEntry[];
 	conductor: RosterEntry;
 	maxRunUsd: number | undefined;
+	/** Policy in force for this cast. */
+	policy?: CrewPolicy;
+	/** Re-cast the same items under another policy (board `p`); throws {@link CrewCastError}. */
+	recast?(policy: CrewPolicy): CastResult;
+	/** Run id when the board approves additions to a live run. */
+	addingTo?: string;
 }
 
 /** Started run plus the plan it came from, for the Stage adapters. */
@@ -55,10 +87,12 @@ export interface CrewRunContext {
 	conductor: RosterEntry;
 	startedAt: number;
 	toolCallId: string;
+	/** The board's `p` toggle for this run, layered over the session policy. */
+	policyOverride?: Pick<CrewPolicy, "openWeightOnly">;
 }
 
 export interface CrewHost {
-	/** Enabled roster entries the router may cast. */
+	/** Every connected model as a roster entry (disabled ones included; the router skips them). */
 	roster(): Promise<RosterEntry[]>;
 	/** The conductor's model as a roster entry (baseline and no-eligible fallback). */
 	conductor(): RosterEntry;
@@ -66,6 +100,9 @@ export interface CrewHost {
 	maxRunUsd(): number | undefined;
 	autoApprove(): boolean;
 	setAutoApprove?(on: boolean): void;
+	/** Session crew policy (Gaurav's stated preferences). */
+	policy?(): CrewPolicy;
+	setPolicy?(policy: CrewPolicy): void;
 	/** Casting Board; absent when no UI can ask (then plans within budget start directly). */
 	approve?(request: CrewApprovalRequest, signal?: AbortSignal): Promise<CrewApproval>;
 	spawner(): CrewWorkerSpawner;
@@ -77,7 +114,7 @@ export interface CrewHost {
 }
 
 export interface CrewToolDetails {
-	op: "plan" | "send" | "wait" | "status" | "escalate" | "kill";
+	op: "models" | "policy" | "plan" | "add" | "reassign" | "send" | "wait" | "status" | "escalate" | "kill";
 	runId?: string;
 	planNumber?: number;
 	totalEstUsd?: number;
@@ -92,9 +129,9 @@ function elapsed(ms: number): string {
 	return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
-/** Unique employee names for a plan. */
-function castNames(items: readonly WorkItem[]): Record<string, string> {
-	const used = new Set<string>();
+/** Unique employee names for a plan, avoiding names already in use. */
+function castNames(items: readonly WorkItem[], taken: Iterable<string> = []): Record<string, string> {
+	const used = new Set(taken);
 	const names: Record<string, string> = {};
 	for (const item of items) {
 		let name = generateTaskName();
@@ -106,14 +143,57 @@ function castNames(items: readonly WorkItem[]): Record<string, string> {
 	return names;
 }
 
-/** Items kept by the board, with dependencies on dropped rows removed. */
-function keptItems(items: readonly WorkItem[], cast: CastResult): { kept: WorkItem[]; dropped: string[] } {
+/** Items kept by the board, with dependencies on dropped rows removed (`known` deps always kept). */
+function keptItems(
+	items: readonly WorkItem[],
+	cast: CastResult,
+	known: ReadonlySet<string> = new Set(),
+): { kept: WorkItem[]; dropped: string[] } {
 	const ids = new Set(cast.assignments.map(a => a.itemId));
 	const dropped = items.filter(item => !ids.has(item.id)).map(item => item.id);
 	const kept = items
 		.filter(item => ids.has(item.id))
-		.map(item => ({ ...item, dependsOn: item.dependsOn.filter(dep => ids.has(dep)) }));
+		.map(item => ({ ...item, dependsOn: item.dependsOn.filter(dep => ids.has(dep) || known.has(dep)) }));
 	return { kept, dropped };
+}
+
+/**
+ * What must change between a rejected plan and the next one: the items (brief included), the models
+ * they were cast on, and the policy. Equal fingerprints = an identical resubmission.
+ */
+export function planFingerprint(items: readonly WorkItem[], cast: CastResult, policy: CrewPolicy): string {
+	const selectors = new Map(cast.assignments.map(a => [a.itemId, a.selector]));
+	const rows = [...items]
+		.sort((a, b) => a.id.localeCompare(b.id))
+		.map(item => [
+			item.id,
+			item.title.trim(),
+			item.brief.trim(),
+			[...item.skills].sort(),
+			item.difficulty,
+			item.size,
+			[...item.dependsOn].sort(),
+			[...item.scope].sort(),
+			selectors.get(item.id) ?? "",
+		]);
+	return JSON.stringify({ rows, policy: describePolicy(policy) });
+}
+
+/** Normalised policy: empty lists and false flags dropped. */
+function cleanPolicy(policy: CrewPolicy): CrewPolicy {
+	const out: CrewPolicy = {};
+	if (policy.openWeightOnly) out.openWeightOnly = true;
+	if (policy.providers?.length) out.providers = [...new Set(policy.providers)];
+	if (policy.excludeProviders?.length) out.excludeProviders = [...new Set(policy.excludeProviders)];
+	if (policy.maxTier !== undefined) out.maxTier = policy.maxTier;
+	if (policy.preferQuality) out.preferQuality = true;
+	return out;
+}
+
+interface Rejection {
+	planNumber: number;
+	fingerprint: string;
+	note: string;
 }
 
 export class CrewController {
@@ -122,6 +202,11 @@ export class CrewController {
 	#roster: RosterEntry[] = [];
 	#plans = 0;
 	#runs = 0;
+	/** Session policy when the host keeps none. */
+	#policy: CrewPolicy = {};
+	#lastRejection: Rejection | undefined;
+	/** Models Gaurav picked on the board for a rejected plan, applied to the next plan's same item ids. */
+	#boardPicks = new Map<string, string>();
 
 	constructor(host: CrewHost) {
 		this.#host = host;
@@ -133,6 +218,21 @@ export class CrewController {
 
 	get run(): CrewRun | undefined {
 		return this.#context?.run;
+	}
+
+	/** The session crew policy. */
+	policy(): CrewPolicy {
+		return this.#host.policy?.() ?? this.#policy;
+	}
+
+	/** The session policy with the live run's board toggle applied (four call sites cast under it). */
+	#runPolicy(): CrewPolicy {
+		return { ...this.policy(), ...this.#context?.policyOverride };
+	}
+
+	#setPolicy(policy: CrewPolicy): void {
+		if (this.#host.setPolicy) this.#host.setPolicy(policy);
+		else this.#policy = policy;
 	}
 
 	#requireRun(): CrewRun {
@@ -153,11 +253,67 @@ export class CrewController {
 		return found;
 	}
 
+	#cast(items: WorkItem[], roster: RosterEntry[], conductor: RosterEntry, policy: CrewPolicy, maxRunUsd?: number) {
+		try {
+			return castCrew(items, roster, conductor, { maxRunUsd, policy });
+		} catch (error) {
+			if (error instanceof CrewCastError) throw new ToolError(error.message);
+			throw error;
+		}
+	}
+
+	async models(filter: ModelFilter = {}): Promise<AgentToolResult<CrewToolDetails>> {
+		const roster = await this.#host.roster();
+		this.#roster = roster;
+		const conductor = this.#host.conductor();
+		return text(formatModelTable(roster, { filter, policy: this.policy(), conductor: conductor.selector }), {
+			op: "models",
+		});
+	}
+
+	async setPolicy(patch: CrewPolicy & { clear?: boolean }): Promise<AgentToolResult<CrewToolDetails>> {
+		const { clear, ...fields } = patch;
+		const next = cleanPolicy(clear ? fields : { ...this.policy(), ...fields });
+		const roster = await this.#host.roster();
+		this.#roster = roster;
+		const providers = new Set(roster.map(entry => entry.provider));
+		const unknown = (next.providers ?? []).filter(provider => !providers.has(provider));
+		if (unknown.length > 0) {
+			throw new ToolError(
+				`Unknown provider(s): ${unknown.join(", ")}. Connected providers: ${[...providers].sort().join(", ")}.`,
+			);
+		}
+		const allowed = roster.filter(entry => entry.enabled && !policyViolation(entry, next));
+		if (allowed.length === 0) {
+			throw new ToolError(
+				[
+					`No connected model satisfies that policy (${describePolicy(next)}); the policy was not changed.`,
+					formatModelTable(roster, { policy: next }),
+				].join("\n"),
+			);
+		}
+		this.#setPolicy(next);
+		const byTier = [3, 2, 1].map(tier => `t${tier}: ${allowed.filter(e => e.tier === tier).length}`).join(", ");
+		return text(
+			[
+				`Crew policy set: ${describePolicy(next)}. It holds for every plan, addition, reassignment and escalation this session until changed.`,
+				`${allowed.length} model(s) allowed (${byTier}): ${allowed
+					.sort((a, b) => b.tier - a.tier || a.selector.localeCompare(b.selector))
+					.slice(0, 12)
+					.map(e => `${e.selector} t${e.tier}`)
+					.join(", ")}${allowed.length > 12 ? ", …" : ""}`,
+			].join("\n"),
+			{ op: "policy" },
+		);
+	}
+
 	async plan(items: WorkItem[], toolCallId: string, signal?: AbortSignal): Promise<AgentToolResult<CrewToolDetails>> {
 		const active = this.#context?.run;
 		if (active && !active.finished) {
 			if (!active.settled) {
-				throw new ToolError("A crew run is still in progress. Wait for it, or crew_kill its items first.");
+				throw new ToolError(
+					"A crew run is still in progress. Add items to it with crew_add, wait for it, or crew_kill its items first.",
+				);
 			}
 			await active.finish();
 		}
@@ -170,35 +326,49 @@ export class CrewController {
 				].join("\n"),
 			);
 		}
+		const picked = items.map(item => {
+			const pick = this.#boardPicks.get(item.id);
+			return pick && !item.model ? { ...item, model: pick, reason: "Gaurav's pick on the Casting Board" } : item;
+		});
 		const roster = await this.#host.roster();
 		const conductor = this.#host.conductor();
 		const maxRunUsd = this.#host.maxRunUsd();
-		const cast = castCrew(items, roster, conductor, { maxRunUsd });
-		const names = castNames(items);
-		const planNumber = ++this.#plans;
-		const request: CrewApprovalRequest = { planNumber, items, cast, names, roster, conductor, maxRunUsd };
+		const policy = this.policy();
+		const cast = this.#cast(picked, roster, conductor, policy, maxRunUsd);
 
-		let approval: CrewApproval;
-		if (this.#host.autoApprove() && !cast.overBudget) approval = { approved: true, cast };
-		else if (this.#host.approve) approval = await this.#host.approve(request, signal);
-		else if (cast.overBudget) {
-			throw new ToolError(
-				`Plan #${planNumber} is estimated at ${usd(cast.totalEstUsd)}, over the ${usd(maxRunUsd ?? 0)} run budget, and there is no Casting Board here to confirm it. Nothing was spawned; shrink the plan (fewer or smaller items, lower difficulty where honest).`,
-			);
-		} else approval = { approved: true, cast };
-
-		if (!approval.approved) {
+		const fingerprint = planFingerprint(picked, cast, policy);
+		const last = this.#lastRejection;
+		if (last && last.fingerprint === fingerprint) {
 			throw new ToolError(
 				[
-					`Gaurav rejected plan #${planNumber} on the Casting Board; nothing was spawned.`,
-					approval.note.trim() ? `Note: ${approval.note.trim()}` : "No note given.",
-					"Revise the plan and call crew_plan again.",
+					`This is the same plan Gaurav rejected as plan #${last.planNumber} (same items, same models, same policy); it was not shown again.`,
+					last.note ? `His note: ${last.note}` : "He gave no note; ask him what to change.",
+					"Change what the note asks for before resubmitting: set `model` per item (see crew_models), change the items, or record his preference with crew_policy.",
 				].join("\n"),
 			);
 		}
+
+		const names = castNames(picked);
+		const planNumber = ++this.#plans;
+		const request: CrewApprovalRequest = {
+			planNumber,
+			items: picked,
+			cast,
+			names,
+			roster,
+			conductor,
+			maxRunUsd,
+			policy,
+			recast: next => castCrew(picked, roster, conductor, { maxRunUsd, policy: next }),
+		};
+
+		const approval = await this.#decide(request, signal);
+		if (!approval.approved) throw this.#rejected(planNumber, fingerprint, approval);
+		this.#lastRejection = undefined;
+		this.#boardPicks.clear();
 		if (approval.autoApprove) this.#host.setAutoApprove?.(true);
 
-		const { kept, dropped } = keptItems(items, approval.cast);
+		const { kept, dropped } = keptItems(picked, approval.cast);
 		if (kept.length === 0) throw new ToolError("Every item was dropped on the Casting Board; nothing was spawned.");
 		this.#roster = roster;
 		const runNumber = ++this.#runs;
@@ -213,6 +383,7 @@ export class CrewController {
 			onChange: () => this.#host.onChange?.(),
 			promptHead: this.#host.promptHead(),
 			names,
+			conductor,
 		});
 		this.#context = {
 			run,
@@ -222,21 +393,20 @@ export class CrewController {
 			conductor,
 			startedAt: Date.now(),
 			toolCallId,
+			policyOverride: approval.policy ? { openWeightOnly: approval.policy.openWeightOnly === true } : undefined,
 		};
 		this.#host.onRunStart?.(this.#context);
 		run.start();
 
 		const lines = [`Plan #${planNumber} approved. Run ${run.snapshot().length} item(s):`];
-		for (const entry of run.snapshot()) {
-			const a = entry.assignment;
-			const deps = entry.item.dependsOn.length > 0 ? ` · after ${entry.item.dependsOn.join(", ")}` : "";
-			lines.push(
-				`- ${entry.item.id} → ${entry.name} on ${a.selector} (tier ${a.tier}, est ${usd(a.estCostUsd, a.planIncluded)})${deps}`,
-			);
-		}
-		lines.push(`Estimate ${usd(approval.cast.totalEstUsd)} vs ${usd(approval.cast.baselineEstUsd)} conductor-only.`);
+		lines.push(...this.#castLines(run.snapshot()));
+		lines.push(this.#estimateLine(approval.cast));
+		if (approval.policy)
+			lines.push(`Gaurav set the policy for this run on the board: ${describePolicy(approval.policy)}.`);
 		if (dropped.length > 0) lines.push(`Dropped on the board (do not re-plan unless asked): ${dropped.join(", ")}.`);
-		lines.push("Results deliver themselves as workers finish; verify each by reading the files it touched.");
+		lines.push(
+			"Results deliver themselves as workers finish. Review each one against its acceptance criteria by reading the files it touched, then crew_send concrete fix-ups.",
+		);
 		return {
 			content: [{ type: "text", text: lines.join("\n") }],
 			details: {
@@ -247,6 +417,179 @@ export class CrewController {
 				baselineEstUsd: approval.cast.baselineEstUsd,
 			},
 		};
+	}
+
+	async #decide(request: CrewApprovalRequest, signal?: AbortSignal): Promise<CrewApproval> {
+		const { cast, maxRunUsd, planNumber } = request;
+		if (this.#host.autoApprove() && !cast.overBudget) return { approved: true, cast };
+		if (this.#host.approve) return this.#host.approve(request, signal);
+		if (cast.overBudget) {
+			throw new ToolError(
+				`Plan #${planNumber} is estimated at ${usd(cast.totalEstUsd)}, over the ${usd(maxRunUsd ?? 0)} run budget, and there is no Casting Board here to confirm it. Nothing was spawned; shrink the plan (fewer or smaller items, lower difficulty where honest).`,
+			);
+		}
+		return { approved: true, cast };
+	}
+
+	#rejected(planNumber: number, fingerprint: string, approval: Extract<CrewApproval, { approved: false }>): ToolError {
+		const note = approval.note.trim();
+		this.#lastRejection = { planNumber, fingerprint, note };
+		for (const edit of approval.edits ?? []) this.#boardPicks.set(edit.itemId, edit.selector);
+		const lines = [`Gaurav rejected plan #${planNumber} on the Casting Board; nothing was spawned.`];
+		lines.push(note ? `Gaurav rejected: ${note}` : "No note given.");
+		if (approval.edits?.length) {
+			lines.push(
+				`His row edits (kept for the same item ids in your next plan): ${approval.edits.map(e => `${e.itemId} → ${e.selector}`).join(", ")}.`,
+			);
+		}
+		if (approval.dropped?.length) lines.push(`He dropped: ${approval.dropped.join(", ")}.`);
+		lines.push(
+			"Change something real before resubmitting — models (`model` per item), items, or the policy (crew_policy when the note states a preference such as open-weight or a provider). An identical plan is refused.",
+		);
+		return new ToolError(lines.join("\n"));
+	}
+
+	#castLines(entries: CrewItemSnapshot[]): string[] {
+		return entries.map(entry => {
+			const a = entry.assignment;
+			const deps = entry.item.dependsOn.length > 0 ? ` · after ${entry.item.dependsOn.join(", ")}` : "";
+			return `- ${entry.item.id} → ${entry.name} on ${a.selector} (tier ${a.tier}, est ${usd(a.estCostUsd, a.planIncluded)}; ${a.reason})${deps}`;
+		});
+	}
+
+	#estimateLine(cast: CastResult): string {
+		return cast.baselinePlan
+			? `Estimate ${usd(cast.totalEstUsd)}; the conductor is plan-priced, so there is no dollar baseline.`
+			: `Estimate ${usd(cast.totalEstUsd)} vs ${usd(cast.baselineEstUsd)} conductor-only.`;
+	}
+
+	async add(items: WorkItem[], toolCallId: string, signal?: AbortSignal): Promise<AgentToolResult<CrewToolDetails>> {
+		const context = this.#context;
+		const run = context?.run;
+		if (!context || !run || run.finished) return this.plan(items, toolCallId, signal);
+
+		const snapshot = run.snapshot();
+		const existing = new Map(snapshot.map(entry => [entry.item.id, entry]));
+		const clash = items.filter(item => existing.has(item.id)).map(item => item.id);
+		if (clash.length > 0) {
+			throw new ToolError(
+				`Item id(s) already in this run: ${clash.join(", ")}. Use new ids (e.g. W-0${snapshot.length + 1}).`,
+			);
+		}
+		// Settled items stay as read-only anchors: new items may depend on them but never clash with their scopes.
+		const anchors: WorkItem[] = snapshot.map(entry =>
+			TERMINAL.has(entry.state) ? { ...entry.item, scope: [], dependsOn: [] } : entry.item,
+		);
+		const errors = validateCrewPlan([...anchors, ...items]).filter(e => e.itemIds.some(id => !existing.has(id)));
+		if (errors.length > 0) {
+			throw new ToolError(
+				["Nothing was added. Fix these and call crew_add again:", ...errors.map(e => `- ${e.message}`)].join("\n"),
+			);
+		}
+
+		const roster = await this.#host.roster();
+		const conductor = context.conductor;
+		const maxRunUsd = this.#host.maxRunUsd();
+		const policy = this.#runPolicy();
+		const cast = this.#cast(items, roster, conductor, policy, maxRunUsd);
+		const names = castNames(
+			items,
+			snapshot.map(entry => entry.name),
+		);
+		const planNumber = context.planNumber;
+		const request: CrewApprovalRequest = {
+			planNumber,
+			items,
+			cast,
+			names,
+			roster,
+			conductor,
+			maxRunUsd,
+			policy,
+			recast: next => castCrew(items, roster, conductor, { maxRunUsd, policy: next }),
+			addingTo: run.runId,
+		};
+		const approval = await this.#decide(request, signal);
+		if (!approval.approved) {
+			const note = approval.note.trim();
+			throw new ToolError(
+				[
+					`Gaurav rejected the additions to ${run.runId}; nothing was added. The running items continue.`,
+					note ? `Gaurav rejected: ${note}` : "No note given.",
+					...(approval.edits?.length
+						? [`His row edits: ${approval.edits.map(e => `${e.itemId} → ${e.selector}`).join(", ")}.`]
+						: []),
+				].join("\n"),
+			);
+		}
+		if (approval.autoApprove) this.#host.setAutoApprove?.(true);
+		const { kept, dropped } = keptItems(items, approval.cast, new Set(existing.keys()));
+		if (kept.length === 0) throw new ToolError("Every new item was dropped on the Casting Board; nothing was added.");
+		try {
+			run.addItems(kept, approval.cast.assignments, names, roster);
+		} catch (error) {
+			throw new ToolError(error instanceof Error ? error.message : String(error));
+		}
+		this.#roster = roster;
+		context.items = [...context.items, ...kept];
+		context.cast = {
+			assignments: [...context.cast.assignments, ...approval.cast.assignments],
+			totalEstUsd: context.cast.totalEstUsd + approval.cast.totalEstUsd,
+			baselineEstUsd: context.cast.baselineEstUsd + approval.cast.baselineEstUsd,
+			baselinePlan: context.cast.baselinePlan,
+			overBudget: context.cast.overBudget || approval.cast.overBudget,
+		};
+		this.#host.onChange?.();
+
+		const added = new Set(kept.map(item => item.id));
+		const lines = [`Added ${kept.length} item(s) to ${run.runId}:`];
+		lines.push(...this.#castLines(run.snapshot().filter(entry => added.has(entry.item.id))));
+		lines.push(this.#estimateLine(approval.cast));
+		if (dropped.length > 0) lines.push(`Dropped on the board: ${dropped.join(", ")}.`);
+		return text(lines.join("\n"), {
+			op: "add",
+			runId: run.runId,
+			planNumber,
+			totalEstUsd: context.cast.totalEstUsd,
+			baselineEstUsd: context.cast.baselineEstUsd,
+		});
+	}
+
+	async reassign(
+		itemId: string,
+		selector: string,
+		note: string | undefined,
+	): Promise<AgentToolResult<CrewToolDetails>> {
+		const run = this.#requireRun();
+		const entry = this.#requireItem(run, itemId);
+		const roster = this.#roster.length > 0 ? this.#roster : await this.#host.roster();
+		const target = roster.find(candidate => candidate.selector === selector);
+		if (!target) {
+			throw new ToolError(`"${selector}" is not a connected model. Call crew_models for the exact selectors.`);
+		}
+		const policy = this.#runPolicy();
+		const violation = policyViolation(target, policy);
+		if (violation) throw new ToolError(`${selector} breaks the crew policy: ${violation}. Pick another model.`);
+		const next: Assignment = {
+			itemId,
+			selector,
+			tier: target.tier,
+			estCostUsd: entryCost(target, entry.item.size),
+			planIncluded: target.planIncluded,
+			reason: `reassigned by the conductor${note?.trim() ? `: ${note.trim()}` : ""}`,
+		};
+		let outcome: "swapped" | "restarted";
+		try {
+			outcome = await run.reassign(itemId, next, note ?? "");
+		} catch (error) {
+			throw new ToolError(error instanceof Error ? error.message : String(error));
+		}
+		return text(
+			outcome === "swapped"
+				? `${itemId} (${entry.name}) will start on ${selector} (tier ${target.tier}, est ${usd(next.estCostUsd, next.planIncluded)}).`
+				: `${itemId} (${entry.name}) restarted on ${selector} (tier ${target.tier}, est ${usd(next.estCostUsd, next.planIncluded)}) with your note and the previous report.`,
+			{ op: "reassign" },
+		);
 	}
 
 	async send(itemId: string, message: string): Promise<AgentToolResult<CrewToolDetails>> {
@@ -308,7 +651,11 @@ export class CrewController {
 
 	status(): AgentToolResult<CrewToolDetails> {
 		const run = this.#context?.run;
-		if (!run) return text("No crew run yet. Submit a plan with crew_plan.", { op: "status" });
+		if (!run) {
+			return text(`No crew run yet. Crew policy: ${describePolicy(this.policy())}. Submit a plan with crew_plan.`, {
+				op: "status",
+			});
+		}
 		return text(this.#statusLines(run).join("\n"), { op: "status", planNumber: this.#context?.planNumber });
 	}
 
@@ -317,12 +664,14 @@ export class CrewController {
 		const entry = this.#requireItem(run, itemId);
 		const conductor = this.#context?.conductor ?? this.#host.conductor();
 		const roster = this.#roster;
+		const policy = this.#runPolicy();
 		let next: Assignment;
 		try {
 			next = await run.escalate(itemId, note, (exclude: string[], minTier: Tier) => {
-				const cast = castCrew([entry.item], roster, conductor, {
+				const cast = castCrew([{ ...entry.item, model: undefined }], roster, conductor, {
 					exclude: { [itemId]: exclude },
 					minTier: { [itemId]: minTier },
+					policy,
 				});
 				return cast.assignments[0]!;
 			});
@@ -368,9 +717,11 @@ export class CrewController {
 		});
 		const cast = this.#context?.cast;
 		const spent = snap.reduce((sum, e) => sum + e.costUsd, 0);
-		lines.push(
-			`Spent ${usd(spent)} of est ${usd(cast?.totalEstUsd ?? 0)} (conductor-only est ${usd(cast?.baselineEstUsd ?? 0)}).`,
-		);
+		const baseline = cast?.baselinePlan
+			? "conductor on a plan"
+			: `conductor-only est ${usd(cast?.baselineEstUsd ?? 0)}`;
+		lines.push(`Spent ${usd(spent)} of est ${usd(cast?.totalEstUsd ?? 0)} (${baseline}).`);
+		lines.push(`Crew policy: ${describePolicy(this.#runPolicy())}.`);
 		if (!run.finished && run.settled)
 			lines.push("Every item has settled; escalate failures, or finish your reply to close the run.");
 		return lines;
@@ -381,25 +732,51 @@ function text(body: string, details: CrewToolDetails): AgentToolResult<CrewToolD
 	return { content: [{ type: "text", text: body }], details };
 }
 
-const skillSchema = type(
-	"'frontend' | 'backend' | 'tests' | 'docs' | 'infra' | 'refactor' | 'research' | 'review' | 'design'",
-);
+const SKILL_UNION =
+	"'frontend' | 'backend' | 'tests' | 'docs' | 'infra' | 'refactor' | 'research' | 'review' | 'design'";
+const skillSchema = type(SKILL_UNION);
 
 const workItemSchema = type({
 	id: type("string > 0").describe("item id, e.g. W-01"),
 	title: type("string > 0").describe("a few words"),
-	brief: type("string").describe("self-contained brief with acceptance criteria; the worker sees nothing else"),
+	brief: type("string").describe(
+		"self-contained brief: goal, files to read first, interfaces/contracts, acceptance criteria, quality bar, skills to load; the worker sees nothing else",
+	),
 	skills: skillSchema.array().describe("skills the item needs"),
 	difficulty: type("1 | 2 | 3").describe("1 mechanical · 2 normal engineering · 3 frontier judgment"),
 	size: type("'S' | 'M' | 'L'").describe("S ≈ a file or two · M · L"),
 	"dependsOn?": type("string[]").describe("item ids that must finish first"),
 	scope: type("string[]").describe("path prefixes the item may write; [] = read-only"),
+	"model?": type("string > 0").describe("exact selector from crew_models; omit to auto-cast"),
+	"reason?": type("string").describe("one line: why this model for this item"),
 });
 
 const crewPlanSchema = type({ items: workItemSchema.array().atLeastLength(1).describe("work items") });
+const crewAddSchema = type({ items: workItemSchema.array().atLeastLength(1).describe("new work items") });
+const crewModelsSchema = type({
+	"filter?": type({
+		"openWeight?": type("boolean").describe("only open-weight (true) or closed (false) models"),
+		"provider?": type("string > 0").describe("provider id"),
+		"minTier?": type("1 | 2 | 3").describe("tier at least"),
+		"skills?": skillSchema.array().describe("strengths covering any of these"),
+	}).describe("narrow the list"),
+});
+const crewPolicySchema = type({
+	"openWeightOnly?": type("boolean").describe("only models with published weights"),
+	"providers?": type("string[]").describe("only these providers"),
+	"excludeProviders?": type("string[]").describe("never these providers"),
+	"maxTier?": type("1 | 2 | 3").describe("never cast above this tier"),
+	"preferQuality?": type("boolean").describe("cast one tier above each item's floor when possible"),
+	"clear?": type("boolean").describe("reset to no policy before applying the other fields"),
+});
+const crewReassignSchema = type({
+	item: type("string > 0").describe("item id"),
+	model: type("string > 0").describe("exact selector from crew_models"),
+	"note?": type("string").describe("what the new worker should know"),
+});
 const crewSendSchema = type({
 	item: type("string > 0").describe("item id"),
-	message: type("string > 0").describe("instructions for the worker"),
+	message: type("string > 0").describe("instructions for the worker, or the answer to its question"),
 });
 const crewWaitSchema = type({
 	"items?": type("string[]").describe("item ids to watch; omit for every running item"),
@@ -417,6 +794,34 @@ abstract class CrewTool {
 	constructor(protected readonly crew: CrewController) {}
 }
 
+function toItems(params: { items: Array<typeof workItemSchema.infer> }): WorkItem[] {
+	return params.items.map(item => ({ ...item, dependsOn: item.dependsOn ?? [] }));
+}
+
+class CrewModelsTool extends CrewTool implements AgentTool<typeof crewModelsSchema, CrewToolDetails> {
+	readonly name = "crew_models";
+	readonly approval = "read" as const;
+	readonly label = "Crew Models";
+	readonly summary = "List connected models with tier, price, strengths and open weights";
+	readonly description = prompt.render(crewModelsDescription);
+	readonly parameters = crewModelsSchema;
+	execute(_id: string, params: typeof crewModelsSchema.infer) {
+		return this.crew.models(params.filter);
+	}
+}
+
+class CrewPolicyTool extends CrewTool implements AgentTool<typeof crewPolicySchema, CrewToolDetails> {
+	readonly name = "crew_policy";
+	readonly approval = "read" as const;
+	readonly label = "Crew Policy";
+	readonly summary = "Record Gaurav's casting rules for the session";
+	readonly description = prompt.render(crewPolicyDescription);
+	readonly parameters = crewPolicySchema;
+	execute(_id: string, params: typeof crewPolicySchema.infer) {
+		return this.crew.setPolicy(params);
+	}
+}
+
 class CrewPlanTool extends CrewTool implements AgentTool<typeof crewPlanSchema, CrewToolDetails> {
 	readonly name = "crew_plan";
 	readonly approval = "exec" as const;
@@ -425,8 +830,31 @@ class CrewPlanTool extends CrewTool implements AgentTool<typeof crewPlanSchema, 
 	readonly description = prompt.render(crewPlanDescription);
 	readonly parameters = crewPlanSchema;
 	execute(toolCallId: string, params: typeof crewPlanSchema.infer, signal?: AbortSignal) {
-		const items: WorkItem[] = params.items.map(item => ({ ...item, dependsOn: item.dependsOn ?? [] }));
-		return this.crew.plan(items, toolCallId, signal);
+		return this.crew.plan(toItems(params), toolCallId, signal);
+	}
+}
+
+class CrewAddTool extends CrewTool implements AgentTool<typeof crewAddSchema, CrewToolDetails> {
+	readonly name = "crew_add";
+	readonly approval = "exec" as const;
+	readonly label = "Crew Add";
+	readonly summary = "Add items (workers) to the running crew";
+	readonly description = prompt.render(crewAddDescription);
+	readonly parameters = crewAddSchema;
+	execute(toolCallId: string, params: typeof crewAddSchema.infer, signal?: AbortSignal) {
+		return this.crew.add(toItems(params), toolCallId, signal);
+	}
+}
+
+class CrewReassignTool extends CrewTool implements AgentTool<typeof crewReassignSchema, CrewToolDetails> {
+	readonly name = "crew_reassign";
+	readonly approval = "exec" as const;
+	readonly label = "Crew Reassign";
+	readonly summary = "Move an item to another model";
+	readonly description = prompt.render(crewReassignDescription);
+	readonly parameters = crewReassignSchema;
+	execute(_id: string, params: typeof crewReassignSchema.infer) {
+		return this.crew.reassign(params.item, params.model, params.note);
 	}
 }
 
@@ -494,7 +922,11 @@ class CrewKillTool extends CrewTool implements AgentTool<typeof crewKillSchema, 
 /** The ephemeral tools installed while Orchestra mode is active. */
 export function createCrewTools(crew: CrewController): AgentTool[] {
 	return [
+		new CrewModelsTool(crew),
+		new CrewPolicyTool(crew),
 		new CrewPlanTool(crew),
+		new CrewAddTool(crew),
+		new CrewReassignTool(crew),
 		new CrewSendTool(crew),
 		new CrewWaitTool(crew),
 		new CrewStatusTool(crew),

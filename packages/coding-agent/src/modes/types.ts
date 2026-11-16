@@ -748,6 +748,8 @@ export interface InteractiveModeContext {
 	): Promise<boolean>;
 	/** gk: `/orchestra` toggle; enters with an optional first prompt. */
 	handleOrchestraModeCommand(initialPrompt?: string): Promise<boolean>;
+	/** gk: `/crew policy …` — session crew policy for Orchestra casting. */
+	handleCrewCommand(args: string): void;
 	handleGoalModeCommand(rest?: string, input?: Pick<SubmittedUserInput, "images" | "imageLinks">): Promise<boolean>;
 	handleGuidedGoalCommand(rest?: string, input?: Pick<SubmittedUserInput, "images" | "imageLinks">): Promise<boolean>;
 	/** True while `/guided-goal` is interviewing the user and no goal record exists yet. */

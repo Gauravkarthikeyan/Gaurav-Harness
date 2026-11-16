@@ -366,6 +366,24 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 		},
 	},
 	{
+		// gk: Orchestra crew policy (casting rules the router and Casting Board enforce)
+		name: "crew",
+		icon: "agents",
+		description: "Orchestra crew policy: open-weight only, providers, max tier, prefer quality",
+		subcommands: [
+			{
+				name: "policy",
+				description: "Show or change the crew policy",
+				usage: "[open-weight|any-weights] [providers=a,b] [exclude=a,b] [max-tier=N|off] [quality|no-quality] [clear]",
+			},
+		],
+		allowArgs: true,
+		handleTui: async (command, runtime) => {
+			clearSubmittedText(runtime);
+			runtime.ctx.handleCrewCommand(command.args || "");
+		},
+	},
+	{
 		name: "goal",
 		icon: "goal",
 		description: "Toggle goal mode (persistent autonomous objective for this session)",

@@ -292,6 +292,9 @@ import {
 } from "../vibe/runtime";
 import type { StageHost } from "../gk/stage/host"; // gk:
 import { enterOrchestraMode, exitOrchestraMode, type OrchestraMode } from "../gk/orchestra-mode"; // gk:
+import { CREW_POLICY_USAGE, parseCrewPolicyArgs } from "../gk/crew-policy-command"; // gk:
+import { describePolicy } from "../gk/router"; // gk:
+import type { CrewPolicy } from "../gk/types"; // gk:
 import { mountStage, shouldMountStage } from "../gk/stage/mount"; // gk:
 import { AssistantMessageComponent } from "@oh-my-pi/pi-tui/chat/assistant-message";
 import { setSvgFigureRendering } from "@oh-my-pi/pi-tui/chat/svg-figure";
@@ -1437,6 +1440,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	goalModePaused = false;
 	vibeModeEnabled = false;
 	#orchestraMode: OrchestraMode | undefined; // gk: Orchestra conductor while on
+	#crewPolicy: CrewPolicy = {}; // gk: Orchestra crew policy for this session (crew_policy, /crew policy)
 	planModePlanFilePath: string | undefined = undefined;
 	loopModeEnabled = false;
 	loopModePaused = false;
@@ -7270,6 +7274,23 @@ export class InteractiveMode implements InteractiveModeContext {
 		return this.#orchestraMode !== undefined;
 	}
 
+	/** gk: `/crew policy …` — show or change the session crew policy the router and Casting Board enforce. */
+	handleCrewCommand(args: string): void {
+		const [sub = "", ...rest] = args.trim().split(/\s+/);
+		if (sub !== "policy") {
+			this.showWarning(`Usage: ${CREW_POLICY_USAGE}`);
+			return;
+		}
+		const parsed = parseCrewPolicyArgs(rest.join(" "), this.#crewPolicy);
+		if ("error" in parsed) {
+			this.showWarning(parsed.error);
+			return;
+		}
+		const changed = JSON.stringify(parsed.policy) !== JSON.stringify(this.#crewPolicy);
+		this.#crewPolicy = parsed.policy;
+		this.showStatus(`Crew policy${changed ? " set" : ""}: ${describePolicy(this.#crewPolicy)}.`);
+	}
+
 	/**
 	 * `/orchestra` toggle and the `--orchestra` launch path. Entering installs the crew tools on a
 	 * `read` (+ `todo`) toolset and the conductor prompt; exiting cancels the run and kills its workers.
@@ -7317,6 +7338,10 @@ export class InteractiveMode implements InteractiveModeContext {
 					const scope = vibeRegistry.ownerScope(parent);
 					vibeRegistry.activateScope(scope);
 					return () => vibeRegistry.killAll(parent, scope);
+				},
+				crewPolicy: () => this.#crewPolicy,
+				setCrewPolicy: policy => {
+					this.#crewPolicy = policy;
 				},
 			});
 		} catch (error) {
