@@ -40,7 +40,13 @@ function ctx(tokens: number | undefined): string {
 /** Markdown-ish table for the conductor; rows the policy rules out end with `✗ <why>`. */
 export function formatModelTable(
 	roster: readonly RosterEntry[],
-	opts: { filter?: ModelFilter; policy?: CrewPolicy; conductor?: string } = {},
+	opts: {
+		filter?: ModelFilter;
+		policy?: CrewPolicy;
+		conductor?: string;
+		/** Models that failed to start this session, with why. */
+		unhealthy?: ReadonlyMap<string, string>;
+	} = {},
 ): string {
 	const rows = filterModels(roster, opts.filter);
 	const lines = [
@@ -52,7 +58,11 @@ export function formatModelTable(
 		const price = entry.planIncluded ? "plan" : `${entry.cost.input}/${entry.cost.output}`;
 		const est = (["S", "M", "L"] as const).map(size => money(entryCost(entry, size), entry.planIncluded)).join("/");
 		const violation = policyViolation(entry, opts.policy);
-		const flags = [!entry.enabled ? "off in roster" : "", violation ? `✗ ${violation}` : ""]
+		const sick = opts.unhealthy?.get(entry.selector);
+		const flags = [
+			sick ? `✗ unhealthy: ${sick}` : !entry.enabled ? "off in roster" : "",
+			violation ? `✗ ${violation}` : "",
+		]
 			.filter(Boolean)
 			.join("; ");
 		lines.push(

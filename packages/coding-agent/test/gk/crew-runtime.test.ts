@@ -5,9 +5,13 @@ import * as path from "node:path";
 import {
 	type CrewEvent,
 	CrewRun,
+	type CrewRunOptions,
 	type CrewWorkerResult,
 	type CrewWorkerSpawner,
 	crewWorkerPrompt,
+	failureReason,
+	isProviderFailure,
+	type UnhealthyMark,
 } from "../../src/gk/crew-runtime";
 import { CrewLedger } from "../../src/gk/ledger";
 import { estimateCostUsd } from "../../src/gk/roster";
@@ -20,6 +24,8 @@ interface FakeWorker {
 	model: string;
 	workerId: string;
 	finish(ok?: boolean, costUsd?: number): void;
+	/** Die like a worker whose provider refused the first request: no tokens, error text. */
+	crash(text: string): void;
 }
 
 /** Spawner whose workers settle only when the test calls `finish`. */
@@ -35,6 +41,7 @@ class FakeSpawner implements CrewWorkerSpawner {
 			...a,
 			workerId,
 			finish: (ok = true, costUsd = 0.1) => resolve({ ok, costUsd, tokens: 100, text: ok ? "all good" : "broke" }),
+			crash: (text: string) => resolve({ ok: false, costUsd: 0, tokens: 0, text }),
 		});
 		return { workerId, settled: promise };
 	}
@@ -101,7 +108,9 @@ describe("CrewRun", () => {
 
 	function setup(
 		items: WorkItem[],
-		opts: { maxConcurrent?: number; conductor?: Pick<RosterEntry, "selector" | "planIncluded" | "cost"> } = {},
+		opts: Partial<Pick<CrewRunOptions, "conductor" | "recast" | "onUnhealthy" | "roster">> & {
+			maxConcurrent?: number;
+		} = {},
 	) {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gk-"));
 		dirs.push(dir);
@@ -118,7 +127,7 @@ describe("CrewRun", () => {
 				baselinePlan: false,
 				overBudget: false,
 			},
-			roster: [rosterEntry("cheap/t1", 1, opts.maxConcurrent ?? 2), rosterEntry("mid/t2", 2, 2)],
+			roster: opts.roster ?? [rosterEntry("cheap/t1", 1, opts.maxConcurrent ?? 2), rosterEntry("mid/t2", 2, 2)],
 			spawner,
 			ledger,
 			onChange: () => {
@@ -126,10 +135,75 @@ describe("CrewRun", () => {
 			},
 			promptHead: "build the thing",
 			conductor: opts.conductor,
+			recast: opts.recast,
+			onUnhealthy: opts.onUnhealthy,
 		});
 		return { run, spawner, ledger, changes: () => changes };
 	}
 
+	describe("fast spawn failures", () => {
+		const PLAN_ERROR =
+			"403 Your Go plan doesn't include API access. Upgrade to Provider or higher at https://commandcode.ai/billing to use these endpoints. (type=permission_error param=upgrade_required)";
+		const roster = [rosterEntry("cheap/t1", 1, 2), rosterEntry("cheap/t1b", 1, 2), rosterEntry("mid/t2", 2, 2)];
+
+		it("marks the whole provider unhealthy on an account error and re-casts this and waiting items", async () => {
+			const marks: UnhealthyMark[] = [];
+			const excludes: string[][] = [];
+			const events: CrewEvent[] = [];
+			const { run, spawner } = setup([item("a"), item("b", { dependsOn: ["a"] })], {
+				roster,
+				onUnhealthy: mark => marks.push(mark),
+				recast: (it, exclude) => {
+					excludes.push(exclude);
+					return assignment(it.id, "mid/t2", 2);
+				},
+			});
+			run.events.on(e => events.push(e));
+			run.start();
+			await tick();
+			spawner.spawned[0]!.crash(`<vibe-turn session="w1">\n${PLAN_ERROR}\n</vibe-turn>`);
+			await tick();
+			await tick();
+			expect(marks).toEqual([{ selector: "cheap/t1", provider: "cheap", reason: PLAN_ERROR.slice(0, 159) + "…" }]);
+			expect(new Set(run.unhealthy().keys())).toEqual(new Set(["cheap/t1", "cheap/t1b"]));
+			expect(excludes[0]).toEqual(expect.arrayContaining(["cheap/t1", "cheap/t1b"]));
+			// The failed item restarts on the re-cast model with the reason in its brief.
+			expect(spawner.spawned[1]!.model).toBe("mid/t2");
+			expect(spawner.spawned[1]!.prompt).toContain("## Re-cast");
+			expect(run.assignment("a").reason).toStartWith("auto re-cast: cheap/t1 failed");
+			// The dependent that had not started moves too, before it ever spawns on the dead provider.
+			expect(run.assignment("b").selector).toBe("mid/t2");
+			expect(events.flatMap(e => (e.type === "item-recast" ? [e.itemId] : []))).toEqual(["a", "b"]);
+			expect(events).toContainEqual({ type: "worker-retired", itemId: "a", workerId: "w1" });
+		});
+
+		it("marks only the model for a model-specific failure, and leaves it failed when nothing else fits", async () => {
+			const { run, spawner } = setup([item("a")], { roster, recast: () => undefined });
+			run.start();
+			await tick();
+			spawner.spawned[0]!.crash("Error: model cheap/t1 is overloaded");
+			await tick();
+			expect([...run.unhealthy().keys()]).toEqual(["cheap/t1"]);
+			expect(run.state("a")).toBe("failed");
+			expect(spawner.spawned).toHaveLength(1);
+		});
+
+		it("ignores slow or productive failures", async () => {
+			const { run, spawner } = setup([item("a")], { roster, recast: () => assignment("a", "mid/t2", 2) });
+			run.start();
+			await tick();
+			spawner.spawned[0]!.finish(false);
+			await tick();
+			expect(run.unhealthy().size).toBe(0);
+			expect(run.state("a")).toBe("failed");
+		});
+	});
+
+	it("reports why a failure happened in one short line", () => {
+		expect(failureReason("<vibe-turn>\n\nError: 429 rate limited\n</vibe-turn>")).toBe("Error: 429 rate limited");
+		expect(isProviderFailure("401 invalid api key")).toBe(true);
+		expect(isProviderFailure("model overloaded")).toBe(false);
+	});
 	it("addItems joins a live run; new items wait on existing deps", async () => {
 		const { run, spawner } = setup([item("a")]);
 		run.start();

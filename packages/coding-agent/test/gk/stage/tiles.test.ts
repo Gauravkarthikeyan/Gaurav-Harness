@@ -21,6 +21,18 @@ function chipAfter(store: TileStore, clock: { t: number }, id: string, ms: numbe
 }
 
 describe("TileStore chips", () => {
+	it("chips a retired (dismissed, ended) worker at once, and un-chips it if it runs again", () => {
+		const { store } = setup();
+		store.add({ id: "agent:w1", kind: "agent", parentId: "main", title: "ToxicTermite", state: "running" });
+		store.update("agent:w1", { state: "error" });
+		store.tick();
+		expect(store.isChip("agent:w1")).toBe(false);
+		store.dismiss("agent:w1");
+		expect(store.isChip("agent:w1")).toBe(true);
+		store.update("agent:w1", { state: "running" });
+		expect(store.isChip("agent:w1")).toBe(false);
+	});
+
 	it("demotes a command 4 s after done, 8 s after a failed exit", () => {
 		const { store, clock } = setup();
 		store.add({ id: "ok", kind: "command", parentId: "main" });

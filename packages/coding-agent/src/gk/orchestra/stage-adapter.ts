@@ -153,6 +153,26 @@ export class OrchestraStage implements StageOrchestra {
 					const text = event.state === "running" ? `start ${entry.item.id}` : `${event.state} ${entry.item.id}`;
 					this.#target.note({ agent: entry.name, agentToken: token, glyph: ITEM_GLYPH[event.state], text });
 				}
+			} else if (event.type === "worker-retired") {
+				// The replaced worker's pane folds to a chip right away instead of holding a tile.
+				const id = `agent:${event.workerId}`;
+				if (store.get(id)) {
+					store.update(id, { state: "error" });
+					store.dismiss(id);
+				}
+			} else if (event.type === "model-unhealthy") {
+				this.#target.note({
+					agent: "crew",
+					glyph: "failed",
+					text: `${event.provider ? `${event.provider} (all models)` : event.selector} unhealthy: ${event.reason}`,
+				});
+			} else if (event.type === "item-recast") {
+				this.#target.note({
+					agent: "crew",
+					agentToken: this.#itemToken(event.itemId),
+					glyph: "running",
+					text: `re-cast ${event.itemId} ${event.from} → ${event.to}`,
+				});
 			} else if (event.type === "run-done") {
 				this.#target.note({
 					agent: "crew",

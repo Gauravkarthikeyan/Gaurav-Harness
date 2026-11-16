@@ -351,6 +351,7 @@ export class CastingBoard implements Component {
 				`${s("dim", "policy ")}${s(this.#policy.openWeightOnly ? "success" : "text", describePolicy(this.#policy))}`,
 			),
 		);
+		for (const notice of req.notices ?? []) out.push(line(s("warning", notice)));
 
 		const items = new Map(req.items.map(item => [item.id, item]));
 		const nameW = Math.max(6, ...this.#rows.map(r => visibleWidth(req.names[r.itemId] ?? "") + 1));

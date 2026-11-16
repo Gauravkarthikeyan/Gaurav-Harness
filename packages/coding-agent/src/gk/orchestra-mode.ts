@@ -32,6 +32,7 @@ export interface OrchestraModeHost {
 	stage(): StageHost | undefined;
 	focusEditor(): void;
 	showStatus(message: string): void;
+	showWarning(message: string): void;
 	/** Append a block to the transcript (payslip). */
 	addTranscriptBlock(component: Component): void;
 	/** Open the worker scope crew sessions spawn into; the returned teardown kills them and reports how many. */
@@ -43,6 +44,22 @@ export interface OrchestraModeHost {
 
 function selectorOf(model: Pick<Model, "provider" | "id">): string {
 	return `${model.provider}/${model.id}`;
+}
+
+const CONDUCTOR_LIMIT_RE =
+	/usage[_ ]limit|quota|rate[_ ]limit|too many requests|\b429\b|\b402\b|insufficient[_ ]?(?:credit|balance|funds|quota)|billing|upgrade_required|api access/i;
+
+/**
+ * The warning to show when the conductor's own model fails on a quota, rate or plan limit, or
+ * `undefined` for any other error: Orchestra cannot plan until the conductor is switched.
+ */
+export function conductorLimitHint(error: string | undefined, conductor: string): string | undefined {
+	if (!error || !CONDUCTOR_LIMIT_RE.test(error)) return undefined;
+	const detail = error
+		.replace(/^Retry failed after \d+ attempts?: /, "")
+		.split("\n")[0]!
+		.slice(0, 160);
+	return `Conductor ${conductor} hit a usage/quota limit (${detail}). Switch the conductor: /models → set the conductor role to another connected model, then send your request again.`;
 }
 
 function lastUserText(session: AgentSession): string {
@@ -122,9 +139,22 @@ export class OrchestraMode {
 					},
 				})
 			: undefined;
-		// The conductor going idle with every item settled closes the run (payslip + ledger).
+		// The conductor going idle with every item settled closes the run (payslip + ledger). A conductor
+		// turn that dies on a quota/limit says how to switch the conductor instead of a bare provider error.
+		let lastHint = "";
 		this.#unsubscribe = session.subscribe(event => {
-			if (event.type === "agent_end") void this.crew.finishIfSettled();
+			let error: string | undefined;
+			if (event.type === "auto_retry_end" && !event.success) error = event.finalError;
+			else if (event.type === "agent_end") {
+				void this.crew.finishIfSettled();
+				const last = event.messages.at(-1);
+				if (last?.role === "assistant" && last.stopReason === "error") error = last.errorMessage;
+			}
+			const hint = conductorLimitHint(error, session.model ? selectorOf(session.model) : "model");
+			if (hint && hint !== lastHint) {
+				lastHint = hint;
+				host.showWarning(hint);
+			}
 		});
 	}
 

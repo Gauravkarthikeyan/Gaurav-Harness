@@ -123,6 +123,8 @@ export function shouldChip(tile: Tile, lookup: TileLookup, now: number): boolean
 	if (tile.restoredAt !== null) return false;
 	if (tile.kind === "error") return tile.dismissed;
 	if (tile.endedAt === null) return false;
+	// A retired worker (replaced or re-cast) chips at once rather than after the worker delay.
+	if (tile.kind === "agent" && tile.dismissed) return true;
 	const since = now - tile.endedAt;
 	switch (tile.kind) {
 		case "command": {
@@ -268,7 +270,7 @@ export class TileStore implements TileLookup {
 		this.update(id, {});
 	}
 
-	/** Dismiss an error tile so it can demote to a chip. */
+	/** Dismiss an error tile, or retire an ended agent tile, so it demotes to a chip. */
 	dismiss(id: string): void {
 		const tile = this.#tiles.get(id);
 		if (!tile) return;

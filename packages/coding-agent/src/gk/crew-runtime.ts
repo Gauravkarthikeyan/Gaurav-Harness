@@ -58,7 +58,44 @@ export interface CrewRunSummary {
 export type CrewEvent =
 	| { type: "item-state"; itemId: string; state: CrewItemState }
 	| { type: "item-worker"; itemId: string; workerId: string }
+	/** A worker no longer runs its item (replaced, re-cast or killed); the Stage retires its pane. */
+	| { type: "worker-retired"; itemId: string; workerId: string }
+	/** A model (or its whole provider) failed right after spawning and is skipped from now on. */
+	| { type: "model-unhealthy"; selector: string; provider?: string; reason: string }
+	/** The run moved an item off an unhealthy model by itself. */
+	| { type: "item-recast"; itemId: string; from: string; to: string; reason: string }
 	| { type: "run-done"; summary: CrewRunSummary };
+
+/** Marks a model (or provider) the run found unusable. */
+export interface UnhealthyMark {
+	selector: string;
+	/** Set when the failure is account-wide (auth, plan, quota): every model of the provider is out. */
+	provider?: string;
+	reason: string;
+}
+
+/** A failed worker that settled this soon after launch, with no tokens, never really started. */
+export const FAST_FAIL_MS = 20_000;
+/** Failures that take the whole provider out: auth, plan, billing, quota. */
+const PROVIDER_FAILURE_RE =
+	/\b(?:401|402|403)\b|permission_error|upgrade_required|api access|unauthori[sz]ed|invalid (?:api )?key|usage[_ ]limit|quota|insufficient[_ ]?(?:credit|balance|funds|quota)|billing/i;
+/** Automatic re-casts per item before the failure is left for the conductor. */
+const MAX_AUTO_RECASTS = 2;
+
+/** The error line of a failed worker's text, short enough for a board row or an event. */
+export function failureReason(text: string): string {
+	const lines = text
+		.split("\n")
+		.map(line => line.replace(/<[^>]+>/g, "").trim())
+		.filter(Boolean);
+	const line = lines.find(l => PROVIDER_FAILURE_RE.test(l) || /error/i.test(l)) ?? lines[0] ?? "no output";
+	return line.length > 160 ? `${line.slice(0, 159)}…` : line;
+}
+
+/** Whether a fast failure's text blames the account (the provider), not the one model. */
+export function isProviderFailure(text: string): boolean {
+	return PROVIDER_FAILURE_RE.test(text);
+}
 
 /** Read-only view of one item, for the Stage and the crew tools. */
 export interface CrewItemSnapshot {
@@ -91,6 +128,13 @@ export interface CrewRunOptions {
 	names?: Record<string, string>;
 	/** The conductor's roster entry: prices the conductor-only baseline in the summary. */
 	conductor?: Pick<RosterEntry, "selector" | "planIncluded" | "cost">;
+	/**
+	 * Re-cast `item` off the models in `exclude` (fast spawn failures). `undefined` = nothing else fits;
+	 * the failure is then left for the conductor.
+	 */
+	recast?(item: WorkItem, exclude: string[]): Assignment | undefined;
+	/** A model or provider was found unusable (shared with later casts). */
+	onUnhealthy?(mark: UnhealthyMark): void;
 }
 
 /** Concurrency cap for a selector the roster does not list (e.g. the conductor fallback). */
@@ -119,6 +163,10 @@ interface ItemRuntime {
 	workers: string[];
 	startedAt?: number;
 	endedAt?: number;
+	/** When the current worker was launched (fast-failure detection). */
+	launchedAt?: number;
+	/** Automatic re-casts after fast failures so far. */
+	autoRecasts: number;
 	lastText?: string;
 }
 
@@ -164,6 +212,8 @@ export class CrewRun {
 	readonly #opts: CrewRunOptions;
 	readonly #items = new Map<string, ItemRuntime>();
 	readonly #limits = new Map<string, number>();
+	/** Models this run found unusable, with why. */
+	readonly #unhealthy = new Map<string, string>();
 	readonly #listeners = new Set<(e: CrewEvent) => void>();
 	readonly #resolveDone: (summary: CrewRunSummary) => void;
 	#started = false;
@@ -210,6 +260,7 @@ export class CrewRun {
 				excluded: [],
 				costUsd: 0,
 				workers: [],
+				autoRecasts: 0,
 			});
 		}
 	}
@@ -351,7 +402,10 @@ export class CrewRun {
 		rt.generation++;
 		rt.workerId = undefined;
 		rt.spawning = undefined;
-		if (oldWorker) await this.#kill(oldWorker);
+		if (oldWorker) {
+			await this.#kill(oldWorker);
+			this.#emit({ type: "worker-retired", itemId: rt.item.id, workerId: oldWorker });
+		}
 
 		rt.assignment = next;
 		rt.endedAt = undefined;
@@ -390,7 +444,10 @@ export class CrewRun {
 		this.#setState(rt, "cancelled");
 		// A spawn still in flight sees the bumped generation and kills its own worker.
 		if (spawning) await spawning;
-		if (worker) await this.#kill(worker);
+		if (worker) {
+			await this.#kill(worker);
+			this.#emit({ type: "worker-retired", itemId: rt.item.id, workerId: worker });
+		}
 		this.#pump();
 	}
 
@@ -502,6 +559,7 @@ export class CrewRun {
 		const prompt = rt.nextPrompt ?? crewWorkerPrompt(rt.item);
 		rt.nextPrompt = undefined;
 		rt.startedAt ??= Date.now();
+		rt.launchedAt = Date.now();
 		const generation = ++rt.generation;
 		this.#setState(rt, "running");
 		const spawning = this.#spawnWorker(rt, generation, prompt);
@@ -523,6 +581,7 @@ export class CrewRun {
 			if (!this.#isCurrent(rt, generation)) return;
 			rt.lastText = error instanceof Error ? error.message : String(error);
 			this.#settle(rt, "failed");
+			void this.#onFastFailure(rt, rt.lastText);
 			return;
 		}
 		const current = this.#isCurrent(rt, generation);
@@ -538,11 +597,14 @@ export class CrewRun {
 				if (!this.#isCurrent(rt, generation)) return;
 				rt.lastText = result.text;
 				this.#settle(rt, result.ok ? "done" : "failed");
+				const fast = Date.now() - (rt.launchedAt ?? 0) < FAST_FAIL_MS && !(result.tokens > 0);
+				if (!result.ok && fast) void this.#onFastFailure(rt, result.text);
 			},
 			error => {
 				if (!this.#isCurrent(rt, generation)) return;
 				rt.lastText = error instanceof Error ? error.message : String(error);
 				this.#settle(rt, "failed");
+				if (Date.now() - (rt.launchedAt ?? 0) < FAST_FAIL_MS) void this.#onFastFailure(rt, rt.lastText);
 			},
 		);
 		// Cancelled or escalated while the spawn was in flight: this worker is orphaned.
@@ -553,6 +615,67 @@ export class CrewRun {
 		rt.endedAt = Date.now();
 		this.#setState(rt, state);
 		this.#pump();
+	}
+
+	/** Models this run found unusable, with why (selector → reason). */
+	unhealthy(): ReadonlyMap<string, string> {
+		return this.#unhealthy;
+	}
+
+	/**
+	 * A worker died right after spawning: mark its model unhealthy (the whole provider when the error is
+	 * about the account — auth, plan, quota), then move this item and every not-yet-started item on those
+	 * models to the next best cast, with the reason on the board and in the events.
+	 */
+	async #onFastFailure(rt: ItemRuntime, text: string): Promise<void> {
+		if (this.#finished || this.#cancelled) return;
+		const selector = rt.assignment.selector;
+		const reason = failureReason(text);
+		const providerWide = isProviderFailure(text);
+		const provider =
+			this.#opts.roster.find(entry => entry.selector === selector)?.provider ?? selector.split("/")[0]!;
+		const marked = providerWide
+			? [selector, ...this.#opts.roster.filter(entry => entry.provider === provider).map(entry => entry.selector)]
+			: [selector];
+		for (const s of marked) this.#unhealthy.set(s, reason);
+		const mark: UnhealthyMark = { selector, ...(providerWide ? { provider } : {}), reason };
+		this.#emit({ type: "model-unhealthy", ...mark });
+		this.#opts.onUnhealthy?.(mark);
+		const seconds = Math.max(1, Math.round((Date.now() - (rt.launchedAt ?? Date.now())) / 1000));
+		await this.#autoRecast(rt, `${selector} failed ${seconds}s after spawning: ${reason}`);
+		for (const other of this.#items.values()) {
+			if (other === rt || other.state !== "waiting" || other.workers.length > 0) continue;
+			if (this.#unhealthy.has(other.assignment.selector)) {
+				await this.#autoRecast(other, `${other.assignment.selector} is unhealthy: ${reason}`);
+			}
+		}
+		this.#opts.onChange();
+	}
+
+	async #autoRecast(rt: ItemRuntime, why: string): Promise<void> {
+		const recast = this.#opts.recast;
+		if (!recast || rt.autoRecasts >= MAX_AUTO_RECASTS || this.#finished || this.#cancelled) return;
+		let next: Assignment | undefined;
+		try {
+			next = recast(rt.item, [...new Set([...this.#unhealthy.keys(), ...rt.excluded])]);
+		} catch (error) {
+			logger.warn("gk crew: automatic re-cast failed", { itemId: rt.item.id, error: String(error) });
+			return;
+		}
+		if (!next || this.#unhealthy.has(next.selector)) return;
+		rt.autoRecasts++;
+		const from = rt.assignment.selector;
+		const assignment: Assignment = { ...next, reason: `auto re-cast: ${why}` };
+		this.#emit({ type: "item-recast", itemId: rt.item.id, from, to: assignment.selector, reason: why });
+		if (rt.state === "waiting" && rt.workers.length === 0 && !rt.spawning) {
+			rt.assignment = assignment;
+			this.#pump();
+			return;
+		}
+		await this.#replace(rt, assignment, [
+			"## Re-cast",
+			`The first worker on this item (${from}) failed to start: ${why}. You are its replacement; start from the brief.`,
+		]);
 	}
 
 	async #kill(workerId: string): Promise<void> {

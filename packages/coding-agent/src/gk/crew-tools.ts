@@ -20,7 +20,13 @@ import crewSendDescription from "../prompts/tools/crew-send.md" with { type: "te
 import crewStatusDescription from "../prompts/tools/crew-status.md" with { type: "text" };
 import crewWaitDescription from "../prompts/tools/crew-wait.md" with { type: "text" };
 import { generateTaskName } from "../task/name-generator";
-import { type CrewItemSnapshot, type CrewItemState, CrewRun, type CrewWorkerSpawner } from "./crew-runtime";
+import {
+	type CrewItemSnapshot,
+	type CrewItemState,
+	CrewRun,
+	type CrewWorkerSpawner,
+	type UnhealthyMark,
+} from "./crew-runtime";
 import type { CrewLedger } from "./ledger";
 import { formatModelTable, type ModelFilter } from "./model-table";
 import { validateCrewPlan } from "./plan-validate";
@@ -76,6 +82,8 @@ export interface CrewApprovalRequest {
 	recast?(policy: CrewPolicy): CastResult;
 	/** Run id when the board approves additions to a live run. */
 	addingTo?: string;
+	/** Warnings for the top of the board, e.g. models skipped as unhealthy. */
+	notices?: string[];
 }
 
 /** Started run plus the plan it came from, for the Stage adapters. */
@@ -207,6 +215,8 @@ export class CrewController {
 	#lastRejection: Rejection | undefined;
 	/** Models Gaurav picked on the board for a rejected plan, applied to the next plan's same item ids. */
 	#boardPicks = new Map<string, string>();
+	/** Models the crew found unusable this session (fast spawn failures), with why. */
+	#unhealthy = new Map<string, string>();
 
 	constructor(host: CrewHost) {
 		this.#host = host;
@@ -262,20 +272,75 @@ export class CrewController {
 		}
 	}
 
-	async models(filter: ModelFilter = {}): Promise<AgentToolResult<CrewToolDetails>> {
+	/**
+	 * The host's roster with models the crew found unusable switched off (the router skips them, the
+	 * picker still shows them). Cached for re-casts and reassignments.
+	 */
+	async #rosterNow(): Promise<RosterEntry[]> {
 		const roster = await this.#host.roster();
-		this.#roster = roster;
-		const conductor = this.#host.conductor();
-		return text(formatModelTable(roster, { filter, policy: this.policy(), conductor: conductor.selector }), {
-			op: "models",
+		this.#roster = roster.map(entry => (this.#unhealthy.has(entry.selector) ? { ...entry, enabled: false } : entry));
+		return this.#roster;
+	}
+
+	/** Record a fast spawn failure: the model, or every model of the provider for account-wide errors. */
+	#markUnhealthy(mark: UnhealthyMark): void {
+		this.#unhealthy.set(mark.selector, mark.reason);
+		if (mark.provider) {
+			for (const entry of this.#roster)
+				if (entry.provider === mark.provider) this.#unhealthy.set(entry.selector, mark.reason);
+		}
+		this.#roster = this.#roster.map(entry =>
+			this.#unhealthy.has(entry.selector) ? { ...entry, enabled: false } : entry,
+		);
+		this.#host.onChange?.();
+	}
+
+	/** `commandcode (27 models): 403 …` lines for the board and status. */
+	#unhealthyNotes(): string[] {
+		const byReason = new Map<string, string[]>();
+		for (const [selector, reason] of this.#unhealthy) {
+			const list = byReason.get(reason) ?? [];
+			list.push(selector);
+			byReason.set(reason, list);
+		}
+		return [...byReason].map(([reason, selectors]) => {
+			const providers = [...new Set(selectors.map(s => s.split("/")[0]!))];
+			const who = selectors.length === 1 ? selectors[0]! : `${providers.join(", ")} (${selectors.length} models)`;
+			return `skipping unhealthy ${who}: ${reason}`;
 		});
+	}
+
+	/** CrewRun's re-cast after a fast spawn failure: same item, its model pick dropped, unhealthy models out. */
+	#autoRecast(item: WorkItem, exclude: string[], conductor: RosterEntry): Assignment | undefined {
+		try {
+			const [next] = castCrew([{ ...item, model: undefined }], this.#roster, conductor, {
+				exclude: { [item.id]: exclude },
+				policy: this.#runPolicy(),
+			}).assignments;
+			return next && !this.#unhealthy.has(next.selector) ? next : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	async models(filter: ModelFilter = {}): Promise<AgentToolResult<CrewToolDetails>> {
+		const roster = await this.#rosterNow();
+		const conductor = this.#host.conductor();
+		return text(
+			formatModelTable(roster, {
+				filter,
+				policy: this.policy(),
+				conductor: conductor.selector,
+				unhealthy: this.#unhealthy,
+			}),
+			{ op: "models" },
+		);
 	}
 
 	async setPolicy(patch: CrewPolicy & { clear?: boolean }): Promise<AgentToolResult<CrewToolDetails>> {
 		const { clear, ...fields } = patch;
 		const next = cleanPolicy(clear ? fields : { ...this.policy(), ...fields });
-		const roster = await this.#host.roster();
-		this.#roster = roster;
+		const roster = await this.#rosterNow();
 		const providers = new Set(roster.map(entry => entry.provider));
 		const unknown = (next.providers ?? []).filter(provider => !providers.has(provider));
 		if (unknown.length > 0) {
@@ -330,7 +395,7 @@ export class CrewController {
 			const pick = this.#boardPicks.get(item.id);
 			return pick && !item.model ? { ...item, model: pick, reason: "Gaurav's pick on the Casting Board" } : item;
 		});
-		const roster = await this.#host.roster();
+		const roster = await this.#rosterNow();
 		const conductor = this.#host.conductor();
 		const maxRunUsd = this.#host.maxRunUsd();
 		const policy = this.policy();
@@ -360,6 +425,7 @@ export class CrewController {
 			maxRunUsd,
 			policy,
 			recast: next => castCrew(picked, roster, conductor, { maxRunUsd, policy: next }),
+			notices: this.#unhealthyNotes(),
 		};
 
 		const approval = await this.#decide(request, signal);
@@ -370,7 +436,6 @@ export class CrewController {
 
 		const { kept, dropped } = keptItems(picked, approval.cast);
 		if (kept.length === 0) throw new ToolError("Every item was dropped on the Casting Board; nothing was spawned.");
-		this.#roster = roster;
 		const runNumber = ++this.#runs;
 		const runId = `crew-${runNumber}-${Date.now().toString(36)}`;
 		const run = new CrewRun({
@@ -384,6 +449,8 @@ export class CrewController {
 			promptHead: this.#host.promptHead(),
 			names,
 			conductor,
+			recast: (item, exclude) => this.#autoRecast(item, exclude, conductor),
+			onUnhealthy: mark => this.#markUnhealthy(mark),
 		});
 		this.#context = {
 			run,
@@ -487,7 +554,7 @@ export class CrewController {
 			);
 		}
 
-		const roster = await this.#host.roster();
+		const roster = await this.#rosterNow();
 		const conductor = context.conductor;
 		const maxRunUsd = this.#host.maxRunUsd();
 		const policy = this.#runPolicy();
@@ -507,6 +574,7 @@ export class CrewController {
 			maxRunUsd,
 			policy,
 			recast: next => castCrew(items, roster, conductor, { maxRunUsd, policy: next }),
+			notices: this.#unhealthyNotes(),
 			addingTo: run.runId,
 		};
 		const approval = await this.#decide(request, signal);
@@ -530,7 +598,6 @@ export class CrewController {
 		} catch (error) {
 			throw new ToolError(error instanceof Error ? error.message : String(error));
 		}
-		this.#roster = roster;
 		context.items = [...context.items, ...kept];
 		context.cast = {
 			assignments: [...context.cast.assignments, ...approval.cast.assignments],
@@ -562,12 +629,14 @@ export class CrewController {
 	): Promise<AgentToolResult<CrewToolDetails>> {
 		const run = this.#requireRun();
 		const entry = this.#requireItem(run, itemId);
-		const roster = this.#roster.length > 0 ? this.#roster : await this.#host.roster();
+		const roster = this.#roster.length > 0 ? this.#roster : await this.#rosterNow();
 		const target = roster.find(candidate => candidate.selector === selector);
 		if (!target) {
 			throw new ToolError(`"${selector}" is not a connected model. Call crew_models for the exact selectors.`);
 		}
 		const policy = this.#runPolicy();
+		const sick = this.#unhealthy.get(selector);
+		if (sick) throw new ToolError(`${selector} failed to start earlier this session (${sick}). Pick another model.`);
 		const violation = policyViolation(target, policy);
 		if (violation) throw new ToolError(`${selector} breaks the crew policy: ${violation}. Pick another model.`);
 		const next: Assignment = {
@@ -713,7 +782,8 @@ export class CrewController {
 			const time = e.startedAt !== undefined ? ` · ${elapsed((e.endedAt ?? now) - e.startedAt)}` : "";
 			const waits =
 				e.state === "waiting" && e.item.dependsOn.length > 0 ? ` · waits on ${e.item.dependsOn.join(", ")}` : "";
-			return `- ${e.item.id} ${e.name} · ${e.assignment.selector} · ${e.state}${time}${waits} · ${usd(e.costUsd)}`;
+			const recast = e.assignment.reason.startsWith("auto re-cast") ? ` · ${e.assignment.reason}` : "";
+			return `- ${e.item.id} ${e.name} · ${e.assignment.selector} · ${e.state}${time}${waits} · ${usd(e.costUsd)}${recast}`;
 		});
 		const cast = this.#context?.cast;
 		const spent = snap.reduce((sum, e) => sum + e.costUsd, 0);
@@ -722,6 +792,7 @@ export class CrewController {
 			: `conductor-only est ${usd(cast?.baselineEstUsd ?? 0)}`;
 		lines.push(`Spent ${usd(spent)} of est ${usd(cast?.totalEstUsd ?? 0)} (${baseline}).`);
 		lines.push(`Crew policy: ${describePolicy(this.#runPolicy())}.`);
+		for (const note of this.#unhealthyNotes()) lines.push(`${note[0]!.toUpperCase()}${note.slice(1)}.`);
 		if (!run.finished && run.settled)
 			lines.push("Every item has settled; escalate failures, or finish your reply to close the run.");
 		return lines;

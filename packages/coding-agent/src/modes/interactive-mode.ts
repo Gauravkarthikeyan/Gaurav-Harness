@@ -7330,6 +7330,7 @@ export class InteractiveMode implements InteractiveModeContext {
 				stage: () => this.#stageHost,
 				focusEditor: () => this.#selectorController.focusActiveEditorArea(),
 				showStatus: message => this.showStatus(message),
+				showWarning: message => this.showWarning(message),
 				addTranscriptBlock: component => {
 					this.chatContainer.addChild(component);
 					this.ui.requestRender();

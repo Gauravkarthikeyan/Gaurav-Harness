@@ -309,3 +309,32 @@ describe("conductor control", () => {
 		);
 	});
 });
+
+describe("unhealthy models", () => {
+	it("re-casts a worker that dies on spawn, flags the provider in crew_models, and skips it in later plans", async () => {
+		const h = harness({ roster: [entry("cc/kimi", 1, 1), entry("cc/glm", 1, 1.5), ...ROSTER] });
+		const tools = createCrewTools(h.crew);
+		await tool(tools, "crew_plan").execute("c", { items: [item("a")] });
+		await tick();
+		expect(h.spawner.spawned[0]!.model).toBe("cc/kimi");
+		h.spawner.spawned[0]!.crash("403 Your Go plan doesn't include API access (type=permission_error)");
+		await tick();
+		await tick();
+		expect(h.spawner.spawned[1]!.model).toBe("cheap/one");
+		const status = textOf(await tool(tools, "crew_status").execute("s", {}));
+		expect(status).toContain("auto re-cast: cc/kimi failed");
+		expect(status).toContain("Skipping unhealthy cc (2 models): 403 Your Go plan");
+		const models = textOf(await tool(tools, "crew_models").execute("m", {}));
+		expect(models).toContain("cc/glm | cc | t1 | 0.3/1.5 | ");
+		expect(models).toContain("✗ unhealthy: 403 Your Go plan");
+		await expect(tool(tools, "crew_reassign").execute("r", { item: "a", model: "cc/glm" })).rejects.toThrow(
+			/failed to start earlier this session/,
+		);
+		h.spawner.spawned[1]!.finish();
+		await tick();
+		await h.crew.finishIfSettled();
+		await tool(tools, "crew_plan").execute("c2", { items: [item("b")] });
+		expect(h.requests.at(-1)!.cast.assignments[0]!.selector).toBe("cheap/one");
+		expect(h.requests.at(-1)!.notices).toEqual([expect.stringContaining("skipping unhealthy cc (2 models)")]);
+	});
+});

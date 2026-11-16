@@ -19,6 +19,8 @@ export interface FakeWorker {
 	model: string;
 	workerId: string;
 	finish(ok?: boolean, costUsd?: number): void;
+	/** Die right after spawning with `text` and no tokens (a provider refusing the first request). */
+	crash(text: string): void;
 }
 
 /** Spawner whose workers settle only when the test calls `finish`. */
@@ -34,6 +36,7 @@ export class FakeSpawner implements CrewWorkerSpawner {
 			...a,
 			workerId,
 			finish: (ok = true, costUsd = 0.1) => resolve({ ok, costUsd, tokens: 100, text: ok ? "all good" : "broke" }),
+			crash: text => resolve({ ok: false, costUsd: 0, tokens: 0, text }),
 		});
 		return { workerId, settled: promise };
 	}
