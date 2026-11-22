@@ -32,6 +32,14 @@ import { cfgGkBudgetDailyUsd } from "../settings";
 import type { AgentRef, RegistryEvent } from "../../registry/agent-registry";
 import type { AgentSessionEvent } from "../../session/agent-session-events";
 import { CellBuffer } from "./compositor";
+import {
+	ComputerTileState,
+	computerCaption,
+	computerGraphicsAvailable,
+	computerShotOf,
+	computerTileId,
+	renderComputerBody,
+} from "./computer-tile";
 import { branchLabel, type GitLoader, type GitSnapshot, loadGitSnapshot } from "./git-source";
 import { layoutStage, type Rect, type StageLayout, toLayoutTiles } from "./layout";
 import { AgentFeed } from "./live-feed";
@@ -162,6 +170,8 @@ export interface StageHostOptions {
 	 * session usage and the global settings; `null` leaves TODAY at `–`.
 	 */
 	todaySpend?: { usd: () => Promise<number>; budgetUsd: () => number | undefined } | null;
+	/** Inline screenshots in computer tiles. Default: kitty graphics when `terminal.showImages` is on. */
+	computerGraphics?: () => boolean;
 }
 
 interface AgentInfo {
@@ -224,6 +234,8 @@ export class StageHost {
 	readonly #style: HostStyle;
 	readonly #tween: WeightTween;
 	readonly #tools = new Map<string, ToolRecord>();
+	readonly #computers = new Map<string, ComputerTileState>();
+	readonly #computerGraphics: () => boolean;
 	/** Calls still streaming their arguments (no `tool_execution_start` yet). */
 	readonly #pending = new Map<string, ToolRecord>();
 	readonly #agents = new Map<string, AgentInfo>();
@@ -278,6 +290,7 @@ export class StageHost {
 		this.#ui = options.ui;
 		this.#now = options.now ?? Date.now;
 		this.#style = options.style ?? themeStyle;
+		this.#computerGraphics = options.computerGraphics ?? computerGraphicsAvailable;
 		this.#startedAt = this.#now();
 		this.store = new TileStore({ now: this.#now });
 		this.#tween = new WeightTween({ now: this.#now, motion: options.motion ?? true });
@@ -494,6 +507,7 @@ export class StageHost {
 		} else if (isWebCall(record) && !this.store.get(`web:${id}`)) {
 			this.store.add({ id: `web:${id}`, kind: "web", parentId, title: toolLabel(record) });
 		}
+		if (name === "computer") this.#computerStart(agentId, id, record.args);
 		if (agentId !== null) {
 			this.#feedOf(agentId).addTool(record);
 			this.store.touch(`agent:${agentId}`);
@@ -518,6 +532,7 @@ export class StageHost {
 		const text = resultText(partial);
 		if (text) record.output = text;
 		if (isRecord(partial) && partial.details !== undefined) record.details = partial.details;
+		if (record.name === "computer") this.store.touch(computerTileId(record.agentId));
 		if (this.store.get(`cmd:${id}`)) this.store.touch(`cmd:${id}`);
 		if (this.store.get(`web:${id}`)) this.store.touch(`web:${id}`);
 	}
@@ -536,8 +551,30 @@ export class StageHost {
 		}
 		if (this.store.get(`web:${id}`)) this.store.update(`web:${id}`, { state: isError ? "error" : "done" });
 		if (isEditCall(record.name) && !isError) this.#showDiff(record);
+		if (record.name === "computer") this.#computerEnd(record, result, isError);
 		if (record.agentId !== null) this.store.touch(`agent:${record.agentId}`);
 		if (record.name === "bash" || isEditCall(record.name)) this.refreshGit();
+	}
+
+	/** One computer tile per calling agent; every call appends its caption to that tile's log. */
+	#computerStart(agentId: string | null, callId: string, args: unknown): void {
+		const tileId = computerTileId(agentId);
+		let state = this.#computers.get(tileId);
+		if (!state) {
+			state = new ComputerTileState();
+			this.#computers.set(tileId, state);
+		}
+		state.begin(callId, computerCaption(args), this.#now());
+		if (this.store.get(tileId)) this.store.update(tileId, { state: "running" });
+		else this.store.add({ id: tileId, kind: "computer", parentId: this.#parentTile(agentId), title: "computer" });
+	}
+
+	#computerEnd(record: ToolRecord, result: unknown, isError: boolean): void {
+		const tileId = computerTileId(record.agentId);
+		const state = this.#computers.get(tileId);
+		if (!state) return;
+		state.finish(record.id, { isError, shot: computerShotOf(result) });
+		this.store.update(tileId, { state: state.busy ? "running" : isError ? "error" : "done" });
 	}
 
 	/** One diff tile per file, replaced by the latest edit so it re-enters with fresh timers. */
@@ -1474,6 +1511,25 @@ export class StageHost {
 					return { time: clockTime(e.at), glyph: g, agent: e.agent, agentToken: e.agentToken, text: e.text };
 				});
 				buf.blit(renderEvents({ rows }, inner.w, inner.h, s), inner);
+				return null;
+			}
+			case "computer": {
+				const state = this.#computers.get(tile.id);
+				const running = tile.state === "running";
+				const elapsed = (tile.endedAt ?? now) - tile.createdAt;
+				const badge = running
+					? `${s("accent", "●")} ${s("muted", formatElapsed(elapsed))}`
+					: s("muted", formatDuration(elapsed));
+				const inner = this.#frame(buf, rect, this.#paneTitle(index, tile.title, "", focused), badge, border);
+				if (state) {
+					const graphics = this.#computerGraphics();
+					const rows = renderComputerBody(state, inner.w, inner.h, {
+						graphics,
+						style: s,
+						requestRender: () => this.#ui.requestRender(),
+					});
+					buf.blit(rows, inner);
+				}
 				return null;
 			}
 			default: {

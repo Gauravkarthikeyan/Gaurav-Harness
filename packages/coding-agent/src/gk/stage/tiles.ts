@@ -38,6 +38,7 @@ export const CHIP_DELAY = {
 	nestedAgent: 10_000,
 	worker: 30_000,
 	pty: 10_000,
+	computer: 10_000,
 } as const;
 
 /** How long a `git` tile counts as live after its last change. */
@@ -137,6 +138,8 @@ export function shouldChip(tile: Tile, lookup: TileLookup, now: number): boolean
 			return since >= CHIP_DELAY.diff;
 		case "pty":
 			return since >= CHIP_DELAY.pty;
+		case "computer":
+			return since >= CHIP_DELAY.computer;
 		case "agent": {
 			const parent = tile.parentId === null ? undefined : lookup.get(tile.parentId);
 			if (parent?.kind === "agent") return since >= CHIP_DELAY.nestedAgent;
