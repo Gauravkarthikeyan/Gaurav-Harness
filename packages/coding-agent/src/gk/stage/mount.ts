@@ -3,6 +3,7 @@
  * draws, where todos and agents come from. Interactive mode calls {@link mountStage} once its UI has
  * started; everything else stays omp's.
  */
+import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
 import type { Component, Container, TUI } from "@oh-my-pi/pi-tui";
 import { AssistantMessageComponent } from "@oh-my-pi/pi-tui/chat/assistant-message";
 import type { TranscriptContainer } from "@oh-my-pi/pi-tui/chrome/transcript-container";
@@ -10,9 +11,13 @@ import type { TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
 import { logger } from "@oh-my-pi/pi-utils";
 import { setNativeSymbolPreset } from "@oh-my-pi/pi-tui/theme/theme";
 import type { Settings } from "../../config/settings";
-import { cfgGkStageEnabled } from "../../modes/settings";
+import type { MCPManager } from "../../mcp/manager";
+import { cfgGkStageEnabled, cfgMotionResolved } from "../../modes/settings";
 import { AgentRegistry } from "../../registry/agent-registry";
 import type { AgentSession } from "../../session/agent-session";
+import { copyToClipboard } from "../../utils/clipboard";
+import type { EventBus } from "../../utils/event-bus";
+import type { ErrorActions } from "./error-tile";
 import { StageHost } from "./host";
 import { themeStyle } from "./style";
 
@@ -38,12 +43,52 @@ export interface StageModeContext {
 	readonly hookWidgetContainerAbove: Container;
 	readonly editorContainer: Container;
 	readonly hookWidgetContainerBelow: Container;
-	readonly editor: { setBorderVisible(visible: boolean): void; setPromptGutter(gutter: string | undefined): void };
+	readonly editor: {
+		setBorderVisible(visible: boolean): void;
+		setPromptGutter(gutter: string | undefined): void;
+		getText(): string;
+	};
 	readonly toolOutputExpanded: boolean;
 	readonly todoPhases: readonly TodoPhase[];
 	/** omp's subagent focus: the composer, transcript and interrupts retarget that agent's session. */
 	focusAgentSession(id: string): Promise<void>;
 	unfocusSession(): Promise<void>;
+	readonly settings: Settings;
+	readonly eventBus: EventBus | undefined;
+	readonly mcpManager?: MCPManager;
+	showOAuthSelector(mode: "login" | "logout", providerId?: string): Promise<void>;
+	showModelSelector(options?: { temporaryOnly?: boolean }): void;
+	showStatus(message: string): void;
+	showWarning(message: string): void;
+}
+
+/** Error-tile keys run omp's own flows: the login selector, the model selector, `/retry`, MCP reconnect, the clipboard. */
+function errorActions(ctx: StageModeContext): ErrorActions {
+	const warn = (what: string) => (error: unknown) =>
+		ctx.showWarning(`${what} failed: ${error instanceof Error ? error.message : String(error)}`);
+	return {
+		login: provider => {
+			const oauth = provider ? getOAuthProviders().find(p => p.id === provider) : undefined;
+			void ctx.showOAuthSelector("login", oauth?.id).catch(warn("Login"));
+		},
+		switchModel: () => ctx.showModelSelector({ temporaryOnly: true }),
+		retry: error => {
+			if (error.origin === "mcp" && error.server) {
+				const manager = ctx.mcpManager;
+				if (!manager) return ctx.showWarning("MCP is not running in this session.");
+				ctx.showStatus(`Reconnecting ${error.server}…`);
+				void manager.reconnectServer(error.server, { manual: true }).catch(warn("Reconnect"));
+				return;
+			}
+			if (ctx.session.isStreaming) return ctx.showWarning("Wait for the current response to finish before retrying.");
+			void ctx.session.retry().then(did => {
+				if (!did) ctx.showStatus("Nothing to retry");
+			}, warn("Retry"));
+		},
+		copy: text => {
+			copyToClipboard(text).then(() => ctx.showStatus("Copied the error to the clipboard"), warn("Copy"));
+		},
+	};
 }
 
 /** Stage on: setting on (default) and a real terminal on both ends. `--print`, RPC and pipes never get here. */
@@ -97,12 +142,16 @@ export function mountStage(ctx: StageModeContext): StageHost {
 		todos: () => ctx.todoPhases,
 		registry: AgentRegistry.global(),
 		cwd: ctx.sessionManager.getCwd(),
+		motion: cfgMotionResolved.get(ctx.settings).effects,
 		focusAgent: id => {
 			void (id === null ? ctx.unfocusSession() : ctx.focusAgentSession(id)).catch((error: unknown) => {
 				logger.warn("Stage could not focus agent", { id, error: String(error) });
 			});
 		},
+		errorActions: errorActions(ctx),
+		composerEmpty: () => ctx.editor.getText().trim() === "",
 	});
+	if (ctx.eventBus) host.watchMcp(ctx.eventBus);
 	host.start();
 	return host;
 }

@@ -24,13 +24,14 @@ import { parseSgrMouse, type SgrMouseEvent } from "@oh-my-pi/pi-tui/mouse";
 import { gkPaletteFor } from "@oh-my-pi/pi-tui/theme/gk-palette";
 import { getCurrentThemeName, highlightCode } from "@oh-my-pi/pi-tui/theme/theme";
 import type { TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
-import { isRecord, logger } from "@oh-my-pi/pi-utils";
+import { getLogPath, isRecord, logger } from "@oh-my-pi/pi-utils";
 import { settings } from "../../config/settings";
 import { formatGkVersion } from "../brand";
 import { budgetNotice, getTodaySpendUsd, localDay } from "../daily-spend";
 import { cfgGkBudgetDailyUsd } from "../settings";
 import type { AgentRef, RegistryEvent } from "../../registry/agent-registry";
 import type { AgentSessionEvent } from "../../session/agent-session-events";
+import { MCP_CONNECTION_STATUS_EVENT_CHANNEL } from "../../mcp/startup-events";
 import { CellBuffer } from "./compositor";
 import {
 	ComputerTileState,
@@ -41,6 +42,7 @@ import {
 	renderComputerBody,
 } from "./computer-tile";
 import { branchLabel, type GitLoader, type GitSnapshot, loadGitSnapshot } from "./git-source";
+import { type ErrorActions, type StageErrorInput, StageErrors } from "./error-tile";
 import { layoutStage, type Rect, type StageLayout, toLayoutTiles } from "./layout";
 import { AgentFeed } from "./live-feed";
 import type { StageOrchestra } from "./orchestra-hooks";
@@ -165,6 +167,10 @@ export interface StageHostOptions {
 	highlight?: ((code: string, lang: string | undefined) => string[]) | null;
 	/** Point omp's input at an agent's session (`null` = back to main): typing in a zoomed agent pane steers it. */
 	focusAgent?: (agentId: string | null) => void;
+	/** What an error tile's keys do (log in, switch model, retry, copy); without it those keys do nothing. */
+	errorActions?: ErrorActions;
+	/** Whether omp's composer is empty; a focused error tile only takes its keys then. Default: always. */
+	composerEmpty?: () => boolean;
 	/**
 	 * TODAY's sources: spend across all sessions and the `gk.budget.dailyUsd` limit. Default reads omp-stats
 	 * session usage and the global settings; `null` leaves TODAY at `–`.
@@ -240,6 +246,10 @@ export class StageHost {
 	readonly #pending = new Map<string, ToolRecord>();
 	readonly #agents = new Map<string, AgentInfo>();
 	readonly #feeds = new Map<string, AgentFeed>();
+	readonly #errors: StageErrors;
+	readonly #motion: boolean;
+	#unsubBus: (() => void) | undefined;
+	#commandSeq = 0;
 	readonly #highlight: FeedOptions["highlight"];
 	readonly #diffByPath = new Map<string, string>();
 	readonly #events: StageEvent[] = [];
@@ -293,7 +303,9 @@ export class StageHost {
 		this.#computerGraphics = options.computerGraphics ?? computerGraphicsAvailable;
 		this.#startedAt = this.#now();
 		this.store = new TileStore({ now: this.#now });
-		this.#tween = new WeightTween({ now: this.#now, motion: options.motion ?? true });
+		this.#motion = options.motion ?? true;
+		this.#tween = new WeightTween({ now: this.#now, motion: this.#motion });
+		this.#errors = new StageErrors({ store: this.store, actions: options.errorActions, logPath: () => getLogPath() });
 		this.#highlight =
 			options.highlight === undefined
 				? options.style
@@ -348,6 +360,8 @@ export class StageHost {
 		this.#unsubSession = undefined;
 		this.#unsubRegistry?.();
 		this.#unsubInput?.();
+		this.#unsubBus?.();
+		this.#unsubBus = undefined;
 		for (const info of this.#agents.values()) info.unsubscribe?.();
 		clearInterval(this.#timer);
 		clearInterval(this.#todayTimer);
@@ -383,6 +397,11 @@ export class StageHost {
 
 	/** Route one session event (`agentId` null = the main session). Public for tests and bridges. */
 	handleEvent(agentId: string | null, event: AgentSessionEvent): void {
+		if (event.type === "message_end" || event.type === "tool_execution_end") {
+			const parent = this.#parentTile(agentId);
+			const agent = agentId === null ? undefined : this.#agentName(agentId);
+			if (this.#errors.observe(agent, event, parent === TRANSCRIPT_ID ? null : parent)) this.#changed();
+		}
 		switch (event.type) {
 			case "tool_execution_start":
 				this.#toolStart(agentId, event.toolCallId, event.toolName, event.args, event.intent);
@@ -607,6 +626,45 @@ export class StageHost {
 
 	requestRender(): void {
 		this.#ui.requestRender();
+	}
+
+	/** gk: follow `mcp:connection-status` on omp's event bus: a failed server opens an error tile. */
+	watchMcp(bus: { on(channel: string, handler: (data: unknown) => void): () => void }): void {
+		this.#unsubBus?.();
+		this.#unsubBus = bus.on(MCP_CONNECTION_STATUS_EVENT_CHANNEL, data => {
+			if (this.#errors.observeMcp(data)) this.#changed();
+		});
+	}
+
+	/** Open an error tile directly (failures the harness itself catches). Returns the tile id. */
+	raiseError(input: StageErrorInput): string {
+		const id = this.#errors.raise(input);
+		this.#changed();
+		return id;
+	}
+
+	/**
+	 * gk: a command pane for a command the harness runs itself (`/ship`'s verify). Output streams in with
+	 * `append`; `end` settles it with the exit code (non-zero is a failed command, never an error tile).
+	 */
+	commandPane(command: string): { append(text: string): void; end(exitCode: number): void } {
+		const id = `gk-cmd-${++this.#commandSeq}`;
+		this.#toolStart(null, id, "bash", { command }, undefined);
+		this.#changed();
+		return {
+			append: text => {
+				const record = this.#tools.get(id);
+				if (!record) return;
+				record.output += text;
+				if (this.store.get(`cmd:${id}`)) this.store.touch(`cmd:${id}`);
+				this.#streamRender();
+			},
+			end: exitCode => {
+				const output = this.#tools.get(id)?.output ?? "";
+				this.#toolEnd(id, { content: [{ type: "text", text: output }], details: { exitCode } }, exitCode !== 0);
+				this.#changed();
+			},
+		};
 	}
 
 	/** gk: hand the Stage to Orchestra mode (orchestra preset, crew panes and widgets); `null` returns to Solo. */
@@ -949,6 +1007,7 @@ export class StageHost {
 		if (cols <= 0 || rows <= 0) return [];
 		const now = this.#now();
 		const layout = this.layoutFor(cols, rows);
+		if (this.#motion && this.#errors.animating(now)) this.#scheduleFrame();
 		const buf = new CellBuffer(cols, rows, this.#baseSgr());
 		this.#drawHeader(buf, layout.header, now);
 		this.#band(buf, layout.tabBar, this.#tabs(layout.tabBar.w), "panelBg");
@@ -1513,6 +1572,13 @@ export class StageHost {
 				buf.blit(renderEvents({ rows }, inner.w, inner.h, s), inner);
 				return null;
 			}
+			case "error": {
+				const ago = formatElapsed(now - tile.createdAt);
+				const badge = `${glyph("failed", s)} ${s("muted", ago)}`;
+				const inner = this.#frame(buf, rect, this.#paneTitle(index, "error", tile.title, focused), badge, "error");
+				buf.blit(this.#errors.rows(tile.id, inner.w, inner.h, now, this.#motion, s), inner);
+				return null;
+			}
 			case "computer": {
 				const state = this.#computers.get(tile.id);
 				const running = tile.state === "running";
@@ -1593,6 +1659,13 @@ export class StageHost {
 		}
 		if (this.#ui.hasOverlay()) return undefined;
 		const focused = this.store.focused();
+		// A focused error tile answers its own keys (l/m/r/c, d details, x dismiss) while the composer is empty, so a
+		// prompt being typed never loses letters to it; anything else types on.
+		const composing = this.#opts.composerEmpty?.() === false;
+		if (focused?.kind === "error" && !composing && this.#errors.key(focused.id, data)) {
+			this.#changed();
+			return { consume: true };
+		}
 		if (!this.#zoomedId && !focused) return undefined;
 		const zoomedAgent = this.#zoomedId !== null && this.store.get(this.#zoomedId)?.kind === "agent";
 		if (zoomedAgent && (matchesKey(data, "pageUp") || matchesKey(data, "pageDown"))) {
