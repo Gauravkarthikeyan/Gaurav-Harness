@@ -480,6 +480,15 @@ export const BUILTIN_MODE_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 			runtime.ctx.presentCommandOutput(new CreditsCard((token, text) => theme.fg(token, text)));
 		},
 	},
+	// gk: `/ship` runs the project's verify command and plays BUILD SUCCESSFUL / BUILD FAILED on the result.
+	{
+		name: "ship",
+		description: "Verify the project, then play the build finale",
+		handleTui: async (_command, runtime) => {
+			clearSubmittedText(runtime);
+			await runtime.ctx.runShip();
+		},
+	},
 	{
 		name: "model",
 		icon: "model",

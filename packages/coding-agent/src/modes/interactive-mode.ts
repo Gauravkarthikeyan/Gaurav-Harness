@@ -296,6 +296,8 @@ import { CREW_POLICY_USAGE, parseCrewPolicyArgs } from "../gk/crew-policy-comman
 import { describePolicy } from "../gk/router"; // gk:
 import type { CrewPolicy } from "../gk/types"; // gk:
 import { mountStage, shouldMountStage } from "../gk/stage/mount"; // gk:
+import { cfgGkVerifyCommand } from "../gk/settings"; // gk:
+import { crewFinale, type ShipHost, ship } from "../gk/ship"; // gk:
 import { AssistantMessageComponent } from "@oh-my-pi/pi-tui/chat/assistant-message";
 import { setSvgFigureRendering } from "@oh-my-pi/pi-tui/chat/svg-figure";
 import { setTableCharts } from "@oh-my-pi/pi-tui/chat/table-chart";
@@ -1477,6 +1479,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	#loopAutoSubmitTimer: NodeJS.Timeout | undefined;
 	#pendingLoopIterations = 0;
 	#stageHost: StageHost | undefined; // gk: full-screen Stage surface while mounted
+	readonly #gkStartedAt = Date.now(); // gk: /ship's session time
 	#todoAutoClearTimer: NodeJS.Timeout | undefined;
 	#todoAutoClearGeneration = 0;
 	#modelCycleClearTimer: NodeJS.Timeout | undefined;
@@ -7335,6 +7338,7 @@ export class InteractiveMode implements InteractiveModeContext {
 					this.chatContainer.addChild(component);
 					this.ui.requestRender();
 				},
+				finale: summary => crewFinale(this.#shipHost(), summary), // gk:
 				openWorkerScope: () => {
 					const scope = vibeRegistry.ownerScope(parent);
 					vibeRegistry.activateScope(scope);
@@ -9734,6 +9738,26 @@ export class InteractiveMode implements InteractiveModeContext {
 	// gk: /models screen
 	showGkModelsScreen(): Promise<void> {
 		return this.#selectorController.showGkModelsScreen();
+	}
+
+	// gk: /ship — verify the project, then BUILD SUCCESSFUL / BUILD FAILED
+	async runShip(): Promise<void> {
+		await ship(this.#shipHost(), {
+			costUsd: () => this.session.getSessionStats().cost,
+			startedAt: this.#gkStartedAt,
+		});
+	}
+
+	#shipHost(): ShipHost {
+		return {
+			cwd: this.sessionManager.getCwd(),
+			ui: this.ui,
+			motion: cfgMotionResolved.get(this.settings).effects,
+			verifyOverride: () => cfgGkVerifyCommand.get(this.settings),
+			commandPane: command => this.#stageHost?.commandPane(command),
+			showStatus: message => this.showStatus(message),
+			showWarning: message => this.showWarning(message),
+		};
 	}
 
 	switchSessionModel(model: Model, thinkingLevel?: ConfiguredThinkingLevel): Promise<void> {

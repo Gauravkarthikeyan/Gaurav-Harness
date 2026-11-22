@@ -64,3 +64,16 @@ export const cfgGkBudgetDailyUsd = register({
 		throw new Error(`Invalid gk.budget.dailyUsd: expected a positive USD amount, got ${Bun.inspect(raw)}.`);
 	},
 });
+
+/** `/ship`'s verify command (spec §5.9); empty = detect from the project (package.json, Makefile, Cargo, Go, pytest). */
+export const cfgGkVerifyCommand = register({
+	id: "gk.verifyCommand",
+	type: "string",
+	default: "",
+	ui: {
+		tab: "interaction",
+		group: "Orchestra",
+		label: "Verify command",
+		description: "Command /ship runs before the BUILD SUCCESSFUL finale; empty detects it from the project",
+	},
+});

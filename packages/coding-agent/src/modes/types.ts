@@ -653,6 +653,8 @@ export interface InteractiveModeContext {
 	showModelSelector(options?: { temporaryOnly?: boolean; selectOnly?: SelectOnlyModelSelectorOptions }): void;
 	/** gk: open the Models & providers screen (`/models`). */
 	showGkModelsScreen(): Promise<void>;
+	/** gk: `/ship` — run the verify command as a command pane and play the finale on its result. */
+	runShip(): Promise<void>;
 	/** Session-only switch to an already-resolved model (`/switch <selector>`); compacts first when over context. */
 	switchSessionModel(model: Model, thinkingLevel?: ConfiguredThinkingLevel): Promise<void>;
 	showPluginSelector(mode?: "install" | "uninstall"): void;

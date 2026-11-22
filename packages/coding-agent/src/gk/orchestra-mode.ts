@@ -12,6 +12,7 @@ import { getAgentDir, logger } from "@oh-my-pi/pi-utils";
 import * as path from "node:path";
 import type { Settings } from "../config/settings";
 import type { AgentSession } from "../session/agent-session";
+import type { CrewRunSummary } from "./crew-runtime";
 import { CrewLedger } from "./ledger";
 import { type CrewApproval, type CrewApprovalRequest, CrewController, createCrewTools } from "./crew-tools";
 import { OrchestraStage } from "./orchestra/stage-adapter";
@@ -35,6 +36,8 @@ export interface OrchestraModeHost {
 	showWarning(message: string): void;
 	/** Append a block to the transcript (payslip). */
 	addTranscriptBlock(component: Component): void;
+	/** gk: verify and play the finale for a finished run (spec §5.9); the payslip lands once it closes. */
+	finale?(summary: CrewRunSummary): Promise<unknown>;
 	/** Open the worker scope crew sessions spawn into; the returned teardown kills them and reports how many. */
 	openWorkerScope(): () => Promise<number>;
 	/** Session crew policy; outlives Orchestra mode so `/crew policy` and re-entry keep it. */
@@ -118,7 +121,10 @@ export class OrchestraMode {
 			promptHead: () => lastUserText(session),
 			onRunStart: context => {
 				this.stage?.attach(context);
-				void context.run.done.then(summary => {
+				void context.run.done.then(async summary => {
+					await host.finale?.(summary).catch((error: unknown) => {
+						logger.warn("Crew finale failed", { error: String(error) });
+					});
 					host.addTranscriptBlock(new PayslipComponent(summary, themeStyle));
 					host.ui.requestRender();
 				});
