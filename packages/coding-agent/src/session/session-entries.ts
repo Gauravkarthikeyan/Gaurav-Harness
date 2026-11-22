@@ -318,6 +318,8 @@ export interface SessionInitEntry extends SessionEntryBase {
 	isolated?: boolean;
 	/** Work-pool yield items of the last model call; revival restores them so the yield tool matches. Absent when none. */
 	workPoolYieldItems?: WorkPoolYieldItem[];
+	/** gk: Orchestra conductor agent id for crew workers; revival rebuilds `ask_conductor` from it. */
+	crewConductorId?: string;
 }
 
 /** Mode change entry - tracks agent mode transitions (e.g. plan mode). */

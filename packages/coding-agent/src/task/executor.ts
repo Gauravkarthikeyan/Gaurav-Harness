@@ -5353,6 +5353,7 @@ async function runSubprocessOnThisThread(options: ExecutorOptions): Promise<Sing
 				// stamp the contract so cold revival leaves them transcript-only
 				// even when the workspace was retained for recovery.
 				isolated: worktree !== undefined || undefined,
+				crewConductorId: options.crewConductorId, // gk: revived crew workers keep ask_conductor
 			});
 
 			abortSignal.addEventListener(

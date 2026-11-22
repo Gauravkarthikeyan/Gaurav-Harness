@@ -484,6 +484,7 @@ export async function revivePersistedSubagent(spec: PersistedReviveSpec, expecte
 			// Old files predate persisted spawns: deny re-spawning rather than let
 			// createAgentSession default to wildcard ("*").
 			spawns: init.spawns ?? "",
+			crewConductorId: init.crewConductorId, // gk: revived crew workers keep ask_conductor
 			hasUI: false,
 			enableLsp: restrictToolNames ? false : spec.enableLsp,
 			...(restrictToolNames
