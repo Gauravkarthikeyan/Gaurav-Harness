@@ -24,6 +24,8 @@ import { parseSgrMouse, type SgrMouseEvent } from "@oh-my-pi/pi-tui/mouse";
 import { gkPaletteFor } from "@oh-my-pi/pi-tui/theme/gk-palette";
 import { getCurrentThemeName, highlightCode } from "@oh-my-pi/pi-tui/theme/theme";
 import type { TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
+import { loadXtermTerminal } from "@oh-my-pi/pi-tui/tools/terminal-output";
+import { PtySession } from "@oh-my-pi/pi-natives";
 import { getLogPath, isRecord, logger } from "@oh-my-pi/pi-utils";
 import { settings } from "../../config/settings";
 import { formatGkVersion } from "../brand";
@@ -46,6 +48,7 @@ import { type ErrorActions, type StageErrorInput, StageErrors } from "./error-ti
 import { layoutStage, type Rect, type StageLayout, toLayoutTiles } from "./layout";
 import { AgentFeed } from "./live-feed";
 import type { StageOrchestra } from "./orchestra-hooks";
+import { PTY_RELEASE_KEY, StagePtys, type StagePtysOptions } from "./pty-pane";
 import { type HostStyle, type HostToken, themeStyle } from "./style";
 import { type Tile, type TileState, TileStore } from "./tiles";
 import {
@@ -171,6 +174,8 @@ export interface StageHostOptions {
 	errorActions?: ErrorActions;
 	/** Whether omp's composer is empty; a focused error tile only takes its keys then. Default: always. */
 	composerEmpty?: () => boolean;
+	/** gk: external CLI panes (§5.11): PTY factory and VT loader; default is omp's native `PtySession`. */
+	ptys?: Pick<StagePtysOptions, "spawn" | "terminal" | "shell">;
 	/**
 	 * TODAY's sources: spend across all sessions and the `gk.budget.dailyUsd` limit. Default reads omp-stats
 	 * session usage and the global settings; `null` leaves TODAY at `–`.
@@ -247,6 +252,8 @@ export class StageHost {
 	readonly #agents = new Map<string, AgentInfo>();
 	readonly #feeds = new Map<string, AgentFeed>();
 	readonly #errors: StageErrors;
+	/** gk: external CLI panes (`/open`, `pane_open`). */
+	readonly ptys: StagePtys;
 	readonly #motion: boolean;
 	#unsubBus: (() => void) | undefined;
 	#commandSeq = 0;
@@ -299,13 +306,21 @@ export class StageHost {
 		this.#opts = options;
 		this.#ui = options.ui;
 		this.#now = options.now ?? Date.now;
-		this.#style = options.style ?? themeStyle;
 		this.#computerGraphics = options.computerGraphics ?? computerGraphicsAvailable;
+		this.#style = options.style ?? themeStyle;
 		this.#startedAt = this.#now();
 		this.store = new TileStore({ now: this.#now });
 		this.#motion = options.motion ?? true;
 		this.#tween = new WeightTween({ now: this.#now, motion: this.#motion });
 		this.#errors = new StageErrors({ store: this.store, actions: options.errorActions, logPath: () => getLogPath() });
+		this.ptys = new StagePtys({
+			store: this.store,
+			cwd: options.cwd,
+			spawn: options.ptys?.spawn ?? (() => new PtySession()),
+			terminal: options.ptys?.terminal ?? loadXtermTerminal,
+			shell: options.ptys?.shell,
+			onChange: () => this.#changed(),
+		});
 		this.#highlight =
 			options.highlight === undefined
 				? options.style
@@ -364,6 +379,7 @@ export class StageHost {
 		this.#unsubBus = undefined;
 		for (const info of this.#agents.values()) info.unsubscribe?.();
 		clearInterval(this.#timer);
+		this.ptys.dispose();
 		clearInterval(this.#todayTimer);
 		this.#todayTimer = undefined;
 		clearTimeout(this.#frameTimer);
@@ -551,9 +567,9 @@ export class StageHost {
 		const text = resultText(partial);
 		if (text) record.output = text;
 		if (isRecord(partial) && partial.details !== undefined) record.details = partial.details;
-		if (record.name === "computer") this.store.touch(computerTileId(record.agentId));
 		if (this.store.get(`cmd:${id}`)) this.store.touch(`cmd:${id}`);
 		if (this.store.get(`web:${id}`)) this.store.touch(`web:${id}`);
+		if (record.name === "computer") this.store.touch(computerTileId(record.agentId));
 	}
 
 	#toolEnd(id: string, result: unknown, isError: boolean): void {
@@ -569,8 +585,8 @@ export class StageHost {
 			this.store.update(`cmd:${id}`, { state: isError ? "error" : "done", exitCode });
 		}
 		if (this.store.get(`web:${id}`)) this.store.update(`web:${id}`, { state: isError ? "error" : "done" });
-		if (isEditCall(record.name) && !isError) this.#showDiff(record);
 		if (record.name === "computer") this.#computerEnd(record, result, isError);
+		if (isEditCall(record.name) && !isError) this.#showDiff(record);
 		if (record.agentId !== null) this.store.touch(`agent:${record.agentId}`);
 		if (record.name === "bash" || isEditCall(record.name)) this.refreshGit();
 	}
@@ -639,6 +655,14 @@ export class StageHost {
 	/** Open an error tile directly (failures the harness itself catches). Returns the tile id. */
 	raiseError(input: StageErrorInput): string {
 		const id = this.#errors.raise(input);
+		this.#changed();
+		return id;
+	}
+
+	/** gk: open an external CLI pane (`/open`, `pane_open`) running `command`, focused so typing goes to it. */
+	openPty(command: string, title?: string): string {
+		const id = this.ptys.open(command, title);
+		this.store.focus(id);
 		this.#changed();
 		return id;
 	}
@@ -1187,8 +1211,27 @@ export class StageHost {
 		if (todos.length > 0) {
 			groups.push([{ text: `todo ${todos.filter(t => t.state === "done").length}/${todos.length}` }]);
 		}
-		if (this.#orchestra) return renderTabs(this.#orchestra.tabs(), width, 1, this.#style);
-		return renderTabs({ tabs: [{ index: 0, name: "session", active: true }], summary: groups }, width, 1, this.#style);
+		const ptys = this.ptys.list().map((p, i) => ({
+			index: i + 1,
+			name: `pty:${p.name}`,
+			active: this.store.get(p.id)?.focused === true,
+		}));
+		if (this.#orchestra) {
+			const data = this.#orchestra.tabs();
+			const base = data.tabs.length;
+			return renderTabs(
+				{ ...data, tabs: [...data.tabs, ...ptys.map(t => ({ ...t, index: base + t.index - 1 }))] },
+				width,
+				1,
+				this.#style,
+			);
+		}
+		return renderTabs(
+			{ tabs: [{ index: 0, name: "session", active: ptys.every(t => !t.active) }, ...ptys], summary: groups },
+			width,
+			1,
+			this.#style,
+		);
 	}
 
 	#footer(cols: number, now: number): string[] {
@@ -1209,13 +1252,19 @@ export class StageHost {
 				role: role || undefined,
 				cost: money(stats?.cost ?? 0),
 				clock: `${pad2(date.getHours())}:${pad2(date.getMinutes())} ${pad2(date.getDate())}-${month}-${String(date.getFullYear()).slice(2)}`,
-				hints: [
-					{ key: "⏎", label: "zoom pane" },
-					{ key: "esc", label: "back" },
-					{ key: "^O", label: "expand" },
-					{ key: "M-a", label: "agent hub" },
-					{ key: "/btw", label: "side question" },
-				],
+				hints:
+					this.store.focused()?.kind === "pty" && this.ptys.has(this.store.focused()!.id)
+						? [
+								{ key: "^]", label: "release to composer" },
+								{ key: "click", label: "focus another pane" },
+							]
+						: [
+								{ key: "⏎", label: "zoom pane" },
+								{ key: "esc", label: "back" },
+								{ key: "^O", label: "expand" },
+								{ key: "M-a", label: "agent hub" },
+								{ key: "/btw", label: "side question" },
+							],
 				version: formatGkVersion(),
 			},
 			cols,
@@ -1572,6 +1621,19 @@ export class StageHost {
 				buf.blit(renderEvents({ rows }, inner.w, inner.h, s), inner);
 				return null;
 			}
+			case "pty": {
+				const exitCode = tile.exitCode;
+				const badge =
+					tile.state === "running"
+						? `${s("accent", "●")} ${s("muted", formatElapsed(now - tile.createdAt))}`
+						: s(exitCode === 0 ? "muted" : "error", `exit ${exitCode ?? "?"}`);
+				const inner = this.#frame(buf, rect, this.#paneTitle(index, `pty:${tile.title}`, "", focused), badge, border);
+				const screen = this.ptys.rows(tile.id, inner.w, inner.h);
+				buf.blit(screen.rows, inner);
+				return focused && screen.cursor
+					? { row: inner.y + screen.cursor.row, col: inner.x + screen.cursor.col }
+					: null;
+			}
 			case "error": {
 				const ago = formatElapsed(now - tile.createdAt);
 				const badge = `${glyph("failed", s)} ${s("muted", ago)}`;
@@ -1659,6 +1721,15 @@ export class StageHost {
 		}
 		if (this.#ui.hasOverlay()) return undefined;
 		const focused = this.store.focused();
+		// gk: a focused PTY pane takes every key (Esc and Enter included); Ctrl+] gives focus back to the composer.
+		if (focused?.kind === "pty" && this.ptys.has(focused.id) && focused.state === "running") {
+			if (data === "\x1d" || matchesKey(data, PTY_RELEASE_KEY)) {
+				this.store.focus(null);
+				this.#changed();
+				return { consume: true };
+			}
+			if (this.ptys.key(focused.id, data)) return { consume: true };
+		}
 		// A focused error tile answers its own keys (l/m/r/c, d details, x dismiss) while the composer is empty, so a
 		// prompt being typed never loses letters to it; anything else types on.
 		const composing = this.#opts.composerEmpty?.() === false;
